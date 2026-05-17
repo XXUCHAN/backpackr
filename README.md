@@ -139,7 +139,7 @@ sbt \
 - [x] README 초안 작성
 - [x] 패키지 구조 및 SQL 리소스 골격 추가
 - [x] 원천 이벤트 정규화 및 validation/DLQ 분리 기본 구현
-- [ ] Deduplication 구현
+- [x] Deduplication 기본 구현
 - [ ] Sessionization 구현
 - [ ] Hive external table DDL 작성
 - [ ] WAU 쿼리 및 검증 결과 정리
