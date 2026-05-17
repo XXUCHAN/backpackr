@@ -1,11 +1,15 @@
 package smoke
 
+import config.AppConfig
+import logging.BatchRunLogger
+import model.{BatchExecutionSummary, BatchMode, BatchRunStatus}
 import org.apache.spark.sql.functions.{col, coalesce, length, lit, not}
 import reader.CsvActivityReader
-import support.{DuplicateGroupJsonExporter, SparkFunSuite}
+import support.{DuplicateGroupJsonExporter, PathBuilder, PreflightValidator, QualityGate, SparkFunSuite}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.ActivityWriter
 
+import java.time.Instant
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.{FileVisitResult, Files, Path, Paths, SimpleFileVisitor}
 
@@ -21,12 +25,42 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
     val validOutputPath = tempBaseDir.resolve("valid").toString
     val duplicateOutputPath = tempBaseDir.resolve("duplicates").toString
     val duplicateGroupJsonOutputPath = tempBaseDir.resolve("duplicate-groups.json").toString
+    val preflightStagingBasePath = tempBaseDir.resolve("staging").toString
+    val preflightDlqBasePath = tempBaseDir.resolve("dlq").toString
+    val preflightRunLogBasePath = tempBaseDir.resolve("batch-run-log").toString
+    val batchRunLogPath = PathBuilder.batchRunLogPath(preflightRunLogBasePath, runId)
+    val startedAt = Instant.now
+    val targetDate = "2019-10-01"
+    var runLogInitialized = false
 
     try {
       if (Files.exists(tempBaseDir)) {
         deleteRecursively(tempBaseDir)
       }
       Files.createDirectories(tempBaseDir)
+
+      val preflightConfig = AppConfig(
+        mode = BatchMode.Daily,
+        startDate = "2019-10-01",
+        endDate = "2019-10-01",
+        inputPath = inputPath.toString,
+        stagingBasePath = preflightStagingBasePath,
+        dlqBasePath = preflightDlqBasePath,
+        runLogBasePath = preflightRunLogBasePath,
+        runId = runId
+      )
+
+      PreflightValidator.validate(preflightConfig)
+      BatchRunLogger.logStatus(
+        runLogBasePath = preflightRunLogBasePath,
+        runId = runId,
+        targetDate = targetDate,
+        status = BatchRunStatus.Running,
+        startedAt = startedAt,
+        stagingPath = Some(validOutputPath),
+        dlqPath = Some(duplicateOutputPath)
+      )
+      runLogInitialized = true
 
       val raw = CsvActivityReader.read(spark, inputPath.toString).limit(sampleSize).cache()
       val rawCount = raw.count()
@@ -87,7 +121,46 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
         .orderBy(col("event_date_kst"))
         .collect()
         .map(_.getDate(0).toString)
-        .mkString(", ")
+        .toSeq
+
+      val summary = BatchExecutionSummary(
+        inputRowCount = rawCount,
+        validRowCount = validCount,
+        invalidRowCount = invalidCount,
+        outputRowCount = deduplicatedCount,
+        duplicateGroupCount = duplicateGroupCount,
+        duplicateRowsCount = duplicateRowsCount,
+        droppedDuplicateRowsCount = droppedDuplicateCount,
+        dlqRatio = if (rawCount == 0L) 0.0d else invalidCount.toDouble / rawCount.toDouble,
+        invalidReasonSummary =
+          if (invalidCount > 0L) {
+            validationResult.invalid
+              .groupBy("reject_reason")
+              .count()
+              .collect()
+              .map(row => row.getString(0) -> row.getLong(1))
+              .toMap
+          } else {
+            Map.empty[String, Long]
+          },
+        outputPartitions = outputPartitions
+      )
+
+      val qualityGateResult = QualityGate.evaluate(summary)
+      val qualityGateStatus =
+        if (qualityGateResult.warnings.isEmpty) "PASS" else s"PASS_WITH_WARNING (${qualityGateResult.warnings.mkString("; ")})"
+
+      BatchRunLogger.logStatus(
+        runLogBasePath = preflightRunLogBasePath,
+        runId = runId,
+        targetDate = targetDate,
+        status = BatchRunStatus.Validated,
+        startedAt = startedAt,
+        stagingPath = Some(validOutputPath),
+        dlqPath = Some(duplicateOutputPath),
+        summary = Some(summary),
+        message = if (qualityGateResult.warnings.nonEmpty) Some(qualityGateResult.warnings.mkString("; ")) else None
+      )
 
       if (duplicateRowsCount > 0L) {
         ActivityWriter.writeToStaging(duplicates, duplicateOutputPath)
@@ -101,6 +174,23 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
         assert(!Files.exists(Paths.get(duplicateGroupJsonOutputPath)))
       }
 
+      BatchRunLogger.logStatus(
+        runLogBasePath = preflightRunLogBasePath,
+        runId = runId,
+        targetDate = targetDate,
+        status = BatchRunStatus.Success,
+        startedAt = startedAt,
+        stagingPath = Some(validOutputPath),
+        dlqPath = Some(duplicateOutputPath),
+        summary = Some(summary),
+        message = if (qualityGateResult.warnings.nonEmpty) Some(qualityGateResult.warnings.mkString("; ")) else None
+      )
+      assert(Files.exists(Paths.get(batchRunLogPath)))
+
+      info("Smoke preflight status: PASS")
+      info(s"Smoke quality gate status: $qualityGateStatus")
+      info("Smoke batch run status: SUCCESS")
+      info(s"Smoke batch run log path: $batchRunLogPath")
       info(s"Smoke input path: $inputPath")
       info(s"Smoke sample limit requested: $sampleSize")
       info(s"Smoke raw rows read: $rawCount")
@@ -110,7 +200,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       info(s"Smoke deduplicated output rows: $deduplicatedCount")
       info(s"Smoke duplicate group count: $duplicateGroupCount")
       info(s"Smoke output path: $validOutputPath")
-      info(s"Smoke output partitions: $outputPartitions")
+      info(s"Smoke output partitions: ${outputPartitions.mkString(", ")}")
       info(
         s"Smoke duplicate output path: ${if (duplicateRowsCount > 0L) duplicateOutputPath else "(not generated)"}"
       )
@@ -119,6 +209,21 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       )
       info(s"Smoke duplicate rows: $duplicateRowsCount")
       info(s"Smoke dropped duplicate rows: $droppedDuplicateCount")
+    } catch {
+      case error: Throwable =>
+        if (runLogInitialized) {
+          BatchRunLogger.logStatus(
+            runLogBasePath = preflightRunLogBasePath,
+            runId = runId,
+            targetDate = targetDate,
+            status = BatchRunStatus.Failed,
+            startedAt = startedAt,
+            stagingPath = Some(validOutputPath),
+            dlqPath = Some(duplicateOutputPath),
+            message = Some(Option(error.getMessage).getOrElse(error.getClass.getName))
+          )
+        }
+        throw error
     } finally {
       if (persistentBaseDir.isEmpty) {
         deleteRecursively(tempBaseDir)
