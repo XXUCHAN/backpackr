@@ -3,6 +3,10 @@ ThisBuild / version := "0.1.0-SNAPSHOT"
 ThisBuild / organization := "com.ecommerce"
 
 lazy val sparkVersion = "3.5.1"
+lazy val homebrewJava17 = file("/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home")
+lazy val preferredJavaHome = sys.env.get("JAVA_HOME").map(file).filter(_.exists).orElse {
+  if (homebrewJava17.exists) Some(homebrewJava17) else None
+}
 
 lazy val root = (project in file("."))
   .settings(
@@ -20,6 +24,8 @@ lazy val root = (project in file("."))
       "com.github.scopt" %% "scopt" % "4.1.0",
       "org.scalatest" %% "scalatest" % "3.2.18" % Test
     ),
+    javaHome := preferredJavaHome,
+    Compile / run / javaHome := preferredJavaHome,
     Compile / run / fork := true,
     Compile / run / javaOptions ++= Seq(
       "--add-opens=java.base/java.lang=ALL-UNNAMED",
@@ -35,6 +41,7 @@ lazy val root = (project in file("."))
       "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
       "--add-exports=java.base/sun.util.calendar=ALL-UNNAMED"
     ),
+    Test / javaHome := preferredJavaHome,
     Test / fork := true,
     Test / parallelExecution := false,
     Test / classLoaderLayeringStrategy := ClassLoaderLayeringStrategy.Flat,
