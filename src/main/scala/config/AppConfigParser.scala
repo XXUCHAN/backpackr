@@ -34,7 +34,6 @@ object AppConfigParser {
           .required()
           .action((value, config) => config.copy(inputPath = value)),
         opt[String]("output-base-path")
-          .required()
           .action((value, config) => config.copy(outputBasePath = value)),
         opt[String]("staging-base-path")
           .required()

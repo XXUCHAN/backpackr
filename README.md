@@ -101,6 +101,29 @@ spark-submit \
   --dlq-base-path /warehouse/activity_events_dlq
 ```
 
+현재 구현 범위인 `read -> normalize -> validate`만 빠르게 확인하려면 `.data` 아래에 원본 CSV를 두고 아래처럼 실행할 수 있다.
+
+```bash
+/usr/bin/env \
+JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+PATH=/opt/homebrew/opt/openjdk@17/bin:/opt/homebrew/bin:/usr/bin:/bin \
+COURSIER_CACHE=/Users/xxuchan/backpackr/.coursier \
+sbt \
+  -Dsbt.global.base=/Users/xxuchan/backpackr/.sbt \
+  -Dsbt.boot.directory=/Users/xxuchan/backpackr/.sbt/boot \
+  -Dsbt.ivy.home=/Users/xxuchan/backpackr/.ivy2 \
+  -Dsbt.coursier.home=/Users/xxuchan/backpackr/.coursier \
+  "run --mode daily \
+    --start-date 2019-10-01 \
+    --end-date 2019-11-30 \
+    --input-path /Users/xxuchan/backpackr/.data \
+    --staging-base-path /Users/xxuchan/backpackr/.tmp/staging \
+    --dlq-base-path /Users/xxuchan/backpackr/.tmp/dlq \
+    --run-id local_validation_001"
+```
+
+이 명령은 valid 데이터는 `.tmp/staging/run_id=.../valid/`, invalid 데이터는 `.tmp/dlq/run_id=.../invalid/`에 parquet로 저장하고, 콘솔에는 input/valid/invalid row count와 reject reason 집계를 출력한다.
+
 ## Design Summary
 
 - 내부 계산은 UTC 기준으로 수행한다.

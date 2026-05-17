@@ -1,13 +1,17 @@
 package transform
 
 import schema.ActivitySchema
+import org.apache.spark.sql.Column
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions._
 
 final case class ValidationResult(valid: DataFrame, invalid: DataFrame)
 
 object Validator {
-  def apply(df: DataFrame, targetDate: String): ValidationResult = {
+  def apply(df: DataFrame, targetDate: String): ValidationResult =
+    apply(df, lit(targetDate))
+
+  def apply(df: DataFrame, targetDate: Column): ValidationResult = {
     val invalidEventTime = col("event_time_utc").isNull
     val nullUserId = col("user_id").isNull
     val nullEventType = col("event_type").isNull

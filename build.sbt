@@ -15,10 +15,25 @@ lazy val root = (project in file("."))
       "utf8"
     ),
     libraryDependencies ++= Seq(
-      "org.apache.spark" %% "spark-sql" % sparkVersion % "provided",
-      "org.apache.spark" %% "spark-hive" % sparkVersion % "provided",
+      "org.apache.spark" %% "spark-sql" % sparkVersion,
+      "org.apache.spark" %% "spark-hive" % sparkVersion,
       "com.github.scopt" %% "scopt" % "4.1.0",
       "org.scalatest" %% "scalatest" % "3.2.18" % Test
+    ),
+    Compile / run / fork := true,
+    Compile / run / javaOptions ++= Seq(
+      "--add-opens=java.base/java.lang=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.invoke=ALL-UNNAMED",
+      "--add-opens=java.base/java.lang.reflect=ALL-UNNAMED",
+      "--add-opens=java.base/java.io=ALL-UNNAMED",
+      "--add-opens=java.base/java.net=ALL-UNNAMED",
+      "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+      "--add-opens=java.base/java.nio=ALL-UNNAMED",
+      "--add-opens=java.base/java.util=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+      "--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED",
+      "--add-opens=java.base/sun.util.calendar=ALL-UNNAMED",
+      "--add-exports=java.base/sun.util.calendar=ALL-UNNAMED"
     ),
     Test / fork := true,
     Test / parallelExecution := false,

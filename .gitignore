@@ -13,3 +13,4 @@ target/
 *.log
 *.tmp
 .DS_Store
+.data
