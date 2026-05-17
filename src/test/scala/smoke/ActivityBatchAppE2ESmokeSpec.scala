@@ -1,8 +1,8 @@
 package smoke
 
-import org.apache.spark.sql.functions.{col, coalesce, length, lit}
+import org.apache.spark.sql.functions.{col, coalesce, length, lit, not}
 import reader.CsvActivityReader
-import support.SparkFunSuite
+import support.{DuplicateGroupJsonExporter, SparkFunSuite}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.ActivityWriter
 
@@ -19,6 +19,8 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
     val persistentBaseDir = resolveOutputPath()
     val tempBaseDir = persistentBaseDir.getOrElse(Files.createTempDirectory("activity-oct-e2e-smoke-"))
     val validOutputPath = tempBaseDir.resolve("valid").toString
+    val duplicateOutputPath = tempBaseDir.resolve("duplicates").toString
+    val duplicateGroupJsonOutputPath = tempBaseDir.resolve("duplicate-groups.json").toString
 
     try {
       if (Files.exists(tempBaseDir)) {
@@ -34,18 +36,26 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       val normalized = ActivityNormalizer(raw, runId)
       val targetDateColumn = coalesce(col("event_date_kst").cast("string"), lit("2019-10-01"))
       val validationResult = Validator(normalized, targetDateColumn)
-      val deduplicated = Deduplicator(validationResult.valid).cache()
+      val deduplicationResult = Deduplicator.analyze(validationResult.valid)
+      val deduplicated = deduplicationResult.deduplicated.cache()
+      val duplicates = deduplicationResult.duplicates.cache()
 
       val validCount = validationResult.valid.count()
       val invalidCount = validationResult.invalid.count()
       val deduplicatedCount = deduplicated.count()
+      val duplicateRowsCount = duplicates.count()
+      val droppedDuplicateCount = duplicates.filter(not(col("dedup_retained"))).count()
 
       assert(validCount + invalidCount === rawCount)
       assert(deduplicatedCount <= validCount)
+      assert(droppedDuplicateCount === validCount - deduplicatedCount)
       assert(normalized.columns.contains("event_time_utc"))
       assert(normalized.columns.contains("event_time_kst"))
       assert(normalized.columns.contains("event_date_kst"))
       assert(deduplicated.columns.contains("dedup_key"))
+      assert(duplicates.columns.contains("duplicate_group_size"))
+      assert(duplicates.columns.contains("duplicate_rank"))
+      assert(duplicates.columns.contains("dedup_retained"))
 
       val dedupKeyLengths = deduplicated.select(length(col("dedup_key")).as("dedup_key_length")).distinct().collect()
       assert(dedupKeyLengths.forall(_.getInt(0) == 64))
@@ -57,7 +67,24 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       assert(written.columns.contains("dedup_key"))
       assert(written.filter(col("event_time_utc").isNull).count() === 0L)
       assert(written.select("event_date_kst").distinct().count() > 0L)
+
+      if (duplicateRowsCount > 0L) {
+        ActivityWriter.writeToStaging(duplicates, duplicateOutputPath)
+        DuplicateGroupJsonExporter.writeGroupedJson(duplicates, duplicateGroupJsonOutputPath)
+
+        val writtenDuplicates = spark.read.parquet(duplicateOutputPath)
+        assert(writtenDuplicates.count() === duplicateRowsCount)
+        assert(Files.exists(Paths.get(duplicateGroupJsonOutputPath)))
+      } else {
+        assert(!Files.exists(Paths.get(duplicateOutputPath)))
+        assert(!Files.exists(Paths.get(duplicateGroupJsonOutputPath)))
+      }
+
       info(s"Smoke output path: $validOutputPath")
+      info(s"Smoke duplicate output path: $duplicateOutputPath")
+      info(s"Smoke duplicate group json output path: $duplicateGroupJsonOutputPath")
+      info(s"Smoke duplicate rows: $duplicateRowsCount")
+      info(s"Smoke dropped duplicate rows: $droppedDuplicateCount")
     } finally {
       if (persistentBaseDir.isEmpty) {
         deleteRecursively(tempBaseDir)
