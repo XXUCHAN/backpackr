@@ -45,6 +45,20 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       val deduplicatedCount = deduplicated.count()
       val duplicateRowsCount = duplicates.count()
       val droppedDuplicateCount = duplicates.filter(not(col("dedup_retained"))).count()
+      val duplicateGroupCount =
+        if (duplicateRowsCount > 0L) duplicates.select("dedup_key").distinct().count() else 0L
+      val invalidReasonSummary =
+        if (invalidCount > 0L) {
+          validationResult.invalid
+            .groupBy("reject_reason")
+            .count()
+            .orderBy(col("count").desc, col("reject_reason"))
+            .collect()
+            .map(row => s"${row.getString(0)}=${row.getLong(1)}")
+            .mkString(", ")
+        } else {
+          "none"
+        }
 
       assert(validCount + invalidCount === rawCount)
       assert(deduplicatedCount <= validCount)
@@ -67,6 +81,13 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       assert(written.columns.contains("dedup_key"))
       assert(written.filter(col("event_time_utc").isNull).count() === 0L)
       assert(written.select("event_date_kst").distinct().count() > 0L)
+      val outputPartitions = written
+        .select("event_date_kst")
+        .distinct()
+        .orderBy(col("event_date_kst"))
+        .collect()
+        .map(_.getDate(0).toString)
+        .mkString(", ")
 
       if (duplicateRowsCount > 0L) {
         ActivityWriter.writeToStaging(duplicates, duplicateOutputPath)
@@ -80,9 +101,22 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
         assert(!Files.exists(Paths.get(duplicateGroupJsonOutputPath)))
       }
 
+      info(s"Smoke input path: $inputPath")
+      info(s"Smoke sample limit requested: $sampleSize")
+      info(s"Smoke raw rows read: $rawCount")
+      info(s"Smoke validation passed rows: $validCount")
+      info(s"Smoke validation failed rows: $invalidCount")
+      info(s"Smoke invalid reason summary: $invalidReasonSummary")
+      info(s"Smoke deduplicated output rows: $deduplicatedCount")
+      info(s"Smoke duplicate group count: $duplicateGroupCount")
       info(s"Smoke output path: $validOutputPath")
-      info(s"Smoke duplicate output path: $duplicateOutputPath")
-      info(s"Smoke duplicate group json output path: $duplicateGroupJsonOutputPath")
+      info(s"Smoke output partitions: $outputPartitions")
+      info(
+        s"Smoke duplicate output path: ${if (duplicateRowsCount > 0L) duplicateOutputPath else "(not generated)"}"
+      )
+      info(
+        s"Smoke duplicate group json output path: ${if (duplicateRowsCount > 0L) duplicateGroupJsonOutputPath else "(not generated)"}"
+      )
       info(s"Smoke duplicate rows: $duplicateRowsCount")
       info(s"Smoke dropped duplicate rows: $droppedDuplicateCount")
     } finally {

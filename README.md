@@ -6,7 +6,7 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 
 - UTC 원천 이벤트를 KST 기준 일 partition으로 적재
 - Validation 및 DLQ 분리
-- Deduplication 수행
+- Exact Deduplication 수행
 - `user_id` 기준 5분 inactivity rule로 세션 재생성
 - Hive external table 제공
 - `user_id` 기준 WAU 계산
@@ -27,6 +27,8 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 .
 ├── .gitignore
 ├── build.sbt
+├── docs/
+│   └── Activity_ETL_WAU_Design_V4.md
 ├── project/
 │   └── build.properties
 ├── README.md
@@ -81,6 +83,10 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 원본:
 
 - [Kaggle Ecommerce Behavior Data from Multi Category Store](https://www.kaggle.com/mkechinov/ecommerce-behavior-data-from-multi-category-store)
+
+## Design Document
+
+- V4 설계 문서: [docs/Activity_ETL_WAU_Design_V4.md](docs/Activity_ETL_WAU_Design_V4.md)
 
 ## Prerequisites
 
@@ -161,9 +167,64 @@ sbt \
   "testOnly transform.ActivityNormalizerSpec transform.ValidatorSpec transform.DeduplicatorSpec"
 ```
 
+운영형 support 테스트와 스모크 테스트까지 함께 확인:
+
+```bash
+/usr/bin/env \
+JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+PATH=/opt/homebrew/opt/openjdk@17/bin:/opt/homebrew/bin:/usr/bin:/bin \
+COURSIER_CACHE="$PROJECT_ROOT/.coursier" \
+SMOKE_SAMPLE_LIMIT=1000 \
+sbt \
+  -Dsbt.global.base="$PROJECT_ROOT/.sbt" \
+  -Dsbt.boot.directory="$PROJECT_ROOT/.sbt/boot" \
+  -Dsbt.ivy.home="$PROJECT_ROOT/.ivy2" \
+  -Dsbt.coursier.home="$PROJECT_ROOT/.coursier" \
+  "testOnly support.PreflightValidatorSpec support.QualityGateSpec support.BatchRunLoggerSpec transform.ActivityNormalizerSpec transform.ValidatorSpec transform.DeduplicatorSpec smoke.ActivityBatchAppE2ESmokeSpec"
+```
+
+실데이터 기반 E2E 스모크 테스트 실행:
+
+```bash
+/usr/bin/env \
+JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+PATH=/opt/homebrew/opt/openjdk@17/bin:/opt/homebrew/bin:/usr/bin:/bin \
+COURSIER_CACHE="$PROJECT_ROOT/.coursier" \
+SMOKE_SAMPLE_LIMIT=50000 \
+SMOKE_OUTPUT_PATH="$PROJECT_ROOT/.tmp/smoke-output/oct-limit-50000" \
+sbt \
+  -Dsbt.global.base="$PROJECT_ROOT/.sbt" \
+  -Dsbt.boot.directory="$PROJECT_ROOT/.sbt/boot" \
+  -Dsbt.ivy.home="$PROJECT_ROOT/.ivy2" \
+  -Dsbt.coursier.home="$PROJECT_ROOT/.coursier" \
+  "testOnly smoke.ActivityBatchAppE2ESmokeSpec"
+```
+
 ## Running Locally
 
 현재 구현 기준에서 실제로 실행 가능한 경로는 `sbt run` 기반 로컬 Spark 검증이다.
+
+현재 배치는 아래 운영형 흐름을 포함한다.
+
+- 실행 전 preflight 검증
+  - input path 존재 여부
+  - `start-date <= end-date`
+  - 미래 날짜 여부
+  - 동일 `run_id` staging/DLQ/run-log 경로 충돌 여부
+- `batch_run_log` 파일 기록
+  - `RUNNING`
+  - `VALIDATED`
+  - `PROMOTED`
+  - `SUCCESS`
+  - `FAILED`
+- quality gate
+  - `input_row_count > 0`
+  - `output_row_count > 0`
+  - 전체 `event_time` 파싱 실패 방지
+  - `DLQ ratio <= 5%`
+  - `DLQ ratio > 1%` warning
+- optional final output publish
+  - `--output-base-path` 지정 시 staging 결과를 final output path에 추가 기록
 
 ### 1. 단일 파일 스모크 실행
 
@@ -185,6 +246,7 @@ sbt \
     --input-path $PROJECT_ROOT/.data/2019-Oct.csv \
     --staging-base-path $PROJECT_ROOT/.tmp/staging \
     --dlq-base-path $PROJECT_ROOT/.tmp/dlq \
+    --run-log-base-path $PROJECT_ROOT/.tmp/batch-run-log \
     --run-id local_validation_oct"
 ```
 
@@ -208,7 +270,14 @@ sbt \
     --input-path $PROJECT_ROOT/.data \
     --staging-base-path $PROJECT_ROOT/.tmp/staging \
     --dlq-base-path $PROJECT_ROOT/.tmp/dlq \
+    --run-log-base-path $PROJECT_ROOT/.tmp/batch-run-log \
     --run-id local_validation_001"
+```
+
+final output path까지 같이 쓰고 싶으면 `--output-base-path`를 추가한다.
+
+```bash
+--output-base-path $PROJECT_ROOT/.tmp/final-output
 ```
 
 ## Output Paths
@@ -217,6 +286,8 @@ sbt \
 
 - valid output: `.tmp/staging/run_id=<run_id>/valid/`
 - invalid output: `.tmp/dlq/run_id=<run_id>/invalid/`
+- batch run log: `.tmp/batch-run-log/run_id=<run_id>/batch-run-log.json`
+- optional final output: `<output-base-path>/event_date_kst=...`
 
 콘솔에는 아래 지표가 출력된다.
 
@@ -228,6 +299,28 @@ sbt \
 
 invalid row가 존재하면 `reject_reason` 집계도 함께 출력한다.
 
+실데이터 기반 스모크 테스트는 아래 산출물을 함께 남길 수 있다.
+
+- valid parquet: `.tmp/smoke-output/<run-name>/valid/`
+- duplicates parquet: `.tmp/smoke-output/<run-name>/duplicates/`
+- duplicate groups pretty JSON: `.tmp/smoke-output/<run-name>/duplicate-groups.json`
+
+`duplicate-groups.json`은 사람이 바로 확인할 수 있도록 pretty JSON 형태로 저장되며, 각 중복 그룹에 대해 아래 구조를 가진다.
+
+```json
+[
+  {
+    "dedup_key": "...",
+    "duplicate_group_size": 2,
+    "dropped_duplicate_row_count": 1,
+    "retained_row": { "...": "..." },
+    "dropped_rows": [{ "...": "..." }]
+  }
+]
+```
+
+즉 어떤 row를 남기고 어떤 row를 중복으로 제거했는지 바로 비교할 수 있다.
+
 ## Current Executable Scope
 
 현재 로컬 실행에서 실제로 동작하는 범위는 아래와 같다.
@@ -235,8 +328,12 @@ invalid row가 존재하면 `reject_reason` 집계도 함께 출력한다.
 - CSV read
 - 원천 이벤트 정규화
 - validation / DLQ 분리
-- deduplication
+- exact deduplication
+- preflight validation
+- batch run log 파일 기록
+- quality gate
 - parquet write
+- optional final output publish
 
 아직 미구현 상태인 항목:
 
@@ -244,7 +341,7 @@ invalid row가 존재하면 `reject_reason` 집계도 함께 출력한다.
 - session_state_snapshot
 - Hive partition 등록
 - WAU 실제 집계 연결
-- staging -> final promote 정식 흐름
+- 원자적 staging -> final promote 정식 흐름
 
 ## Notes
 
@@ -253,6 +350,9 @@ invalid row가 존재하면 `reject_reason` 집계도 함께 출력한다.
 - 따라서 과제 검증 단계에서는 먼저 단위 테스트와 작은 범위 스모크를 수행하고, 전체 데이터 실행은 충분한 디스크 공간이 있을 때 수행하는 것이 안전하다.
 - 현재 `build.sbt`는 로컬 `sbt run` 검증을 위해 Spark dependency를 runtime classpath에 포함하도록 설정되어 있다.
 - 추후 실제 클러스터 배포형 `spark-submit`을 사용할 경우에는 packaging 전략을 별도로 정리할 필요가 있다.
+- 현재 dedup은 진짜 중복만 제거하기 위해 `user_id`, `event_time_utc`, `event_type`, `product_id`, `category_id`, `category_code`, `brand`, `normalized_price`, `raw_user_session`이 모두 같은 경우만 중복으로 간주한다.
+- 스모크 테스트는 입력 row 수, validation 통과/실패 건수, dedup 후 row 수, 중복 그룹 수, 제거된 중복 row 수를 로그로 출력한다.
+- 운영형 `sbt run` 실행 시에도 `batch-run-log.json`에 상태와 주요 메트릭이 기록된다.
 
 ## Design Summary
 

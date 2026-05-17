@@ -17,6 +17,10 @@ object BatchRunStatus {
     override val entryName: String = "PROMOTED"
   }
 
+  case object Success extends BatchRunStatus {
+    override val entryName: String = "SUCCESS"
+  }
+
   case object Failed extends BatchRunStatus {
     override val entryName: String = "FAILED"
   }

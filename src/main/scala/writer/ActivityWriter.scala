@@ -8,4 +8,10 @@ object ActivityWriter {
       .mode("overwrite")
       .partitionBy("event_date_kst")
       .parquet(stagingPath)
+
+  def writeToFinal(df: DataFrame, outputPath: String): Unit =
+    df.write
+      .mode("overwrite")
+      .partitionBy("event_date_kst")
+      .parquet(outputPath)
 }

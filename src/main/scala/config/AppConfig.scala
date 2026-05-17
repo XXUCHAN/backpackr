@@ -12,6 +12,7 @@ final case class AppConfig(
     outputBasePath: String = "",
     stagingBasePath: String = "",
     dlqBasePath: String = "",
+    runLogBasePath: String = ".tmp/batch-run-log",
     checkpointBasePath: String = "",
     runId: String = ""
 )

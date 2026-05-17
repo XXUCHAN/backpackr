@@ -41,6 +41,8 @@ object AppConfigParser {
         opt[String]("dlq-base-path")
           .required()
           .action((value, config) => config.copy(dlqBasePath = value)),
+        opt[String]("run-log-base-path")
+          .action((value, config) => config.copy(runLogBasePath = value)),
         opt[String]("checkpoint-base-path")
           .action((value, config) => config.copy(checkpointBasePath = value)),
         opt[String]("run-id")
