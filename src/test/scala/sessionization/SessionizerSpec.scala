@@ -4,6 +4,10 @@ import org.apache.spark.sql.Row
 import schema.ActivitySchema
 import support.SparkFunSuite
 import transform.{ActivityNormalizer, Deduplicator}
+import org.apache.spark.sql.types.{LongType, StringType, StructField, StructType, TimestampType}
+
+import java.sql.Timestamp
+import java.time.Instant
 
 class SessionizerSpec extends SparkFunSuite {
   test("sessionizer should keep events within 299 seconds in the same session and split at 300 seconds") {
@@ -118,5 +122,59 @@ class SessionizerSpec extends SparkFunSuite {
     assert(rows.map(_._2) === Seq("2019-10-01", "2019-10-02"))
     assert(rows.map(_._3).distinct === Seq("2019-10-01 23:58:00"))
     assert(rows.map(_._4).distinct.length === 1)
+  }
+
+  test("sessionizer should carry over the previous snapshot session when the first event gap is less than 5 minutes") {
+    val input = spark.createDataFrame(
+      spark.sparkContext.parallelize(
+        Seq(
+          Row("2019-10-01 15:02:00 UTC", "view", Long.box(1001L), Long.box(2001L), "electronics.audio", "sony", Double.box(10.5d), Long.box(3001L), "session-a"),
+          Row("2019-10-01 15:03:00 UTC", "cart", Long.box(1002L), Long.box(2002L), "electronics.audio", "sony", Double.box(10.5d), Long.box(3001L), "session-a")
+        )
+      ),
+      ActivitySchema.rawSchema
+    )
+
+    val previousSnapshot = spark.createDataFrame(
+      spark.sparkContext.parallelize(
+        Seq(
+          Row(
+            "2019-10-01",
+            Long.box(3001L),
+            "existing-session-id",
+            Timestamp.from(Instant.parse("2019-10-01T14:58:00Z")),
+            Timestamp.from(Instant.parse("2019-10-01T15:00:00Z")),
+            Timestamp.from(Instant.parse("2019-10-02T00:00:00Z")),
+            Timestamp.from(Instant.parse("2019-10-02T00:00:01Z")),
+            "snapshot-run"
+          )
+        )
+      ),
+      StructType(
+        Seq(
+          StructField("snapshot_date_kst", StringType, nullable = false),
+          StructField("user_id", LongType, nullable = false),
+          StructField("last_session_id", StringType, nullable = false),
+          StructField("last_session_start_time_utc", TimestampType, nullable = false),
+          StructField("last_event_time_utc", TimestampType, nullable = false),
+          StructField("last_event_time_kst", TimestampType, nullable = false),
+          StructField("updated_at", TimestampType, nullable = false),
+          StructField("run_id", StringType, nullable = false)
+        )
+      )
+    )
+
+    val sessionized = Sessionizer(Deduplicator(ActivityNormalizer(input, "run-5")), Some(previousSnapshot))
+
+    val rows = sessionized
+      .selectExpr(
+        "date_format(session_start_time_utc, 'yyyy-MM-dd HH:mm:ss') as session_start_time_utc_str",
+        "session_id"
+      )
+      .collect()
+      .map(row => (row.getString(0), row.getString(1)))
+
+    assert(rows.map(_._1).distinct === Seq("2019-10-01 14:58:00"))
+    assert(rows.map(_._2).distinct.length === 1)
   }
 }

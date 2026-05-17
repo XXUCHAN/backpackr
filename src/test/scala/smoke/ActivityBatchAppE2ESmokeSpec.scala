@@ -5,7 +5,7 @@ import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchMode, BatchRunStatus}
 import org.apache.spark.sql.functions.{col, coalesce, length, lit, not}
 import reader.CsvActivityReader
-import sessionization.Sessionizer
+import sessionization.{SessionStateStore, Sessionizer}
 import support.{DuplicateGroupJsonExporter, PathBuilder, PreflightValidator, QualityGate, SparkFunSuite}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.ActivityWriter
@@ -26,6 +26,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
     val validOutputPath = tempBaseDir.resolve("valid").toString
     val duplicateOutputPath = tempBaseDir.resolve("duplicates").toString
     val duplicateGroupJsonOutputPath = tempBaseDir.resolve("duplicate-groups.json").toString
+    val sessionSnapshotBasePath = tempBaseDir.resolve("session-state").toString
     val preflightStagingBasePath = tempBaseDir.resolve("staging").toString
     val preflightDlqBasePath = tempBaseDir.resolve("dlq").toString
     val preflightRunLogBasePath = tempBaseDir.resolve("batch-run-log").toString
@@ -161,6 +162,8 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       val qualityGateResult = QualityGate.evaluate(summary)
       val qualityGateStatus =
         if (qualityGateResult.warnings.isEmpty) "PASS" else s"PASS_WITH_WARNING (${qualityGateResult.warnings.mkString("; ")})"
+      val sessionSnapshot = SessionStateStore.buildSnapshot(sessionized, targetDate, runId)
+      val sessionSnapshotPath = SessionStateStore.saveSnapshot(sessionSnapshot, sessionSnapshotBasePath, targetDate)
 
       BatchRunLogger.logStatus(
         runLogBasePath = preflightRunLogBasePath,
@@ -203,6 +206,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       info(s"Smoke quality gate status: $qualityGateStatus")
       info("Smoke batch run status: SUCCESS")
       info(s"Smoke batch run log path: $batchRunLogPath")
+      info(s"Smoke session snapshot path: $sessionSnapshotPath")
       info(s"Smoke input path: $inputPath")
       info(s"Smoke sample limit requested: $sampleSize")
       info(s"Smoke raw rows read: $rawCount")

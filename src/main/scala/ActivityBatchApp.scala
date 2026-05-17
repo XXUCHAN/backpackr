@@ -3,18 +3,20 @@ import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchRunStatus}
 import org.apache.spark.sql.functions.{col, coalesce, lit, not}
 import reader.CsvActivityReader
-import sessionization.Sessionizer
+import sessionization.{SessionStateStore, Sessionizer}
 import support.{PathBuilder, PreflightValidator, QualityGate, SparkSessionFactory}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.{ActivityWriter, DlqWriter}
 
 import java.time.Instant
+import java.time.LocalDate
 
 object ActivityBatchApp {
   def main(args: Array[String]): Unit = {
     val config = AppConfigParser.parse(args)
     val startedAt = Instant.now
     val targetDate = config.startDate
+    val previousSnapshotDate = LocalDate.parse(targetDate).minusDays(1).toString
     val validOutputPath = s"${PathBuilder.stagingRunPath(config.stagingBasePath, config.runId)}/valid"
     val dlqOutputPath = s"${PathBuilder.stagingRunPath(config.dlqBasePath, config.runId)}/invalid"
     val finalOutputPath = Option(config.outputBasePath).map(_.trim).filter(_.nonEmpty)
@@ -43,7 +45,8 @@ object ActivityBatchApp {
         val validationResult = Validator(normalized, targetDateColumn)
         val deduplicationResult = Deduplicator.analyze(validationResult.valid)
         val deduplicatedValid = deduplicationResult.deduplicated
-        val sessionizedValid = Sessionizer(deduplicatedValid)
+        val previousSnapshot = SessionStateStore.loadSnapshot(spark, config.sessionStateBasePath, previousSnapshotDate)
+        val sessionizedValid = Sessionizer(deduplicatedValid, previousSnapshot)
         val duplicates = deduplicationResult.duplicates
 
         ActivityWriter.writeToStaging(sessionizedValid, validOutputPath)
@@ -126,6 +129,10 @@ object ActivityBatchApp {
           )
         }
 
+        val sessionSnapshot = SessionStateStore.buildSnapshot(sessionizedValid, targetDate, config.runId)
+        val sessionSnapshotPath =
+          SessionStateStore.saveSnapshot(sessionSnapshot, config.sessionStateBasePath, targetDate)
+
         BatchRunLogger.logStatus(
           runLogBasePath = config.runLogBasePath,
           runId = config.runId,
@@ -137,8 +144,8 @@ object ActivityBatchApp {
           finalOutputPath = finalOutputPath,
           summary = Some(summary),
           message =
-            if (qualityGateResult.warnings.nonEmpty) Some(s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount")
-            else Some(s"unique_session_count=$uniqueSessionCount")
+            if (qualityGateResult.warnings.nonEmpty) Some(s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath")
+            else Some(s"unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath")
         )
 
         println(s"mode=${config.mode.entryName}")
@@ -146,6 +153,7 @@ object ActivityBatchApp {
         println(s"input_path=${config.inputPath}")
         println(s"valid_output_path=$validOutputPath")
         println(s"dlq_output_path=$dlqOutputPath")
+        println(s"session_snapshot_path=$sessionSnapshotPath")
         finalOutputPath.foreach(path => println(s"final_output_path=$path"))
         println(s"input_row_count=$inputCount")
         println(s"validated_row_count=$validCount")

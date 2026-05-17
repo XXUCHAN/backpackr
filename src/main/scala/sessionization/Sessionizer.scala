@@ -9,7 +9,10 @@ object Sessionizer {
   private val NullToken = "__null__"
   private val KstZoneId = "Asia/Seoul"
 
-  def apply(df: DataFrame): DataFrame = {
+  def apply(df: DataFrame): DataFrame =
+    apply(df, None)
+
+  def apply(df: DataFrame, previousSnapshot: Option[DataFrame]): DataFrame = {
     val orderingWindow = Window
       .partitionBy("user_id")
       .orderBy(
@@ -35,14 +38,21 @@ object Sessionizer {
           .otherwise(lit(0))
       )
       .withColumn(
-        "session_start_time_utc",
+        "local_session_start_time_utc",
         last(
           when(col("is_new_session") === lit(1), col("event_time_utc")),
           ignoreNulls = true
         ).over(runningWindow)
       )
+      .withColumn("local_session_seq", sum(col("is_new_session")).over(runningWindow))
 
-    withSessionFlags
+    val withFinalSessionStartTime = previousSnapshot match {
+      case Some(snapshot) => applyPreviousSnapshotCarryOver(withSessionFlags, snapshot)
+      case None =>
+        withSessionFlags.withColumn("session_start_time_utc", col("local_session_start_time_utc"))
+    }
+
+    withFinalSessionStartTime
       .withColumn("session_start_time_kst", from_utc_timestamp(col("session_start_time_utc"), KstZoneId))
       .withColumn(
         "session_id",
@@ -55,6 +65,47 @@ object Sessionizer {
           256
         )
       )
-      .drop("previous_event_time_utc", "is_new_session")
+      .drop("previous_event_time_utc", "is_new_session", "local_session_start_time_utc", "local_session_seq")
+  }
+
+  private def applyPreviousSnapshotCarryOver(sessionized: DataFrame, snapshot: DataFrame): DataFrame = {
+    val firstEventPerUser = sessionized
+      .groupBy("user_id")
+      .agg(min(col("event_time_utc")).as("first_event_time_utc"))
+
+    val previousState = snapshot.select(
+      col("user_id").as("snapshot_user_id"),
+      col("last_session_start_time_utc"),
+      col("last_event_time_utc")
+    )
+
+    val carryOverInfo = firstEventPerUser
+      .join(previousState, firstEventPerUser("user_id") === previousState("snapshot_user_id"), "left")
+      .withColumn(
+        "gap_from_previous_seconds",
+        unix_timestamp(col("first_event_time_utc")) - unix_timestamp(col("last_event_time_utc"))
+      )
+      .withColumn(
+        "carry_over_from_previous",
+        col("last_event_time_utc").isNotNull &&
+          col("gap_from_previous_seconds") >= lit(0L) &&
+          col("gap_from_previous_seconds") < lit(SessionGapSeconds)
+      )
+      .select(
+        firstEventPerUser("user_id"),
+        col("carry_over_from_previous"),
+        col("last_session_start_time_utc")
+      )
+
+    sessionized
+      .join(carryOverInfo, Seq("user_id"), "left")
+      .withColumn(
+        "session_start_time_utc",
+        when(
+          col("local_session_seq") === lit(1) && coalesce(col("carry_over_from_previous"), lit(false)),
+          col("last_session_start_time_utc")
+        ).otherwise(col("local_session_start_time_utc"))
+      )
+      .drop("carry_over_from_previous", "last_session_start_time_utc")
   }
 }
