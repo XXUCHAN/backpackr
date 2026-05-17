@@ -39,28 +39,23 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
     │   │       ├── wau_users.sql
     │   │       └── weekly_active_sessions.sql
     │   └── scala/
-    │       └── com/
-    │           └── ecommerce/
-    │               └── activity/
-    │                   ├── ActivityBatchApp.scala
-    │                   ├── config/
-    │                   ├── logging/
-    │                   ├── model/
-    │                   ├── query/
-    │                   ├── reader/
-    │                   ├── schema/
-    │                   ├── state/
-    │                   ├── support/
-    │                   ├── transform/
-    │                   └── writer/
+    │       ├── ActivityBatchApp.scala
+    │       ├── config/
+    │       ├── logging/
+    │       ├── model/
+    │       ├── query/
+    │       ├── reader/
+    │       ├── schema/
+    │       ├── state/
+    │       ├── support/
+    │       ├── transform/
+    │       └── writer/
     └── test/
         ├── resources/
         └── scala/
-            └── com/
-                └── ecommerce/
-                    └── activity/
-                        ├── smoke/
-                        └── support/
+            ├── smoke/
+            ├── support/
+            └── transform/
 ```
 
 ## Planned Modules
@@ -95,7 +90,7 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 sbt package
 
 spark-submit \
-  --class com.ecommerce.activity.ActivityBatchApp \
+  --class ActivityBatchApp \
   target/scala-2.12/activity-etl-wau_2.12-0.1.0-SNAPSHOT.jar \
   --mode daily \
   --start-date 2019-10-01 \
@@ -120,6 +115,8 @@ spark-submit \
 - [x] 기본 엔트리포인트 추가
 - [x] README 초안 작성
 - [x] 패키지 구조 및 SQL 리소스 골격 추가
-- [ ] Spark ETL 구현
+- [x] 원천 이벤트 정규화 및 validation/DLQ 분리 기본 구현
+- [ ] Deduplication 구현
+- [ ] Sessionization 구현
 - [ ] Hive external table DDL 작성
 - [ ] WAU 쿼리 및 검증 결과 정리

@@ -1,6 +1,9 @@
 .bsp/
 .idea/
+.coursier/
+.ivy2/
 .metals/
+.sbt/
 .scala-build/
 .vscode/
 project/project/
