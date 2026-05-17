@@ -89,4 +89,34 @@ class SessionizerSpec extends SparkFunSuite {
     assert(sessionized.filter("session_start_time_kst is null").count() === 0L)
     assert(sessionized.filter("session_id is null").count() === 0L)
   }
+
+  test("sessionizer should keep the same session across KST midnight when gap is less than 5 minutes") {
+    val input = spark.createDataFrame(
+      spark.sparkContext.parallelize(
+        Seq(
+          Row("2019-10-01 14:58:00 UTC", "view", Long.box(1001L), Long.box(2001L), "electronics.audio", "sony", Double.box(10.5d), Long.box(3001L), "session-a"),
+          Row("2019-10-01 15:02:00 UTC", "cart", Long.box(1002L), Long.box(2002L), "electronics.audio", "sony", Double.box(10.5d), Long.box(3001L), "session-a")
+        )
+      ),
+      ActivitySchema.rawSchema
+    )
+
+    val sessionized = Sessionizer(Deduplicator(ActivityNormalizer(input, "run-4")))
+
+    val rows = sessionized
+      .selectExpr(
+        "date_format(event_time_kst, 'yyyy-MM-dd HH:mm:ss') as event_time_kst_str",
+        "cast(event_date_kst as string) as event_date_kst_str",
+        "date_format(session_start_time_kst, 'yyyy-MM-dd HH:mm:ss') as session_start_time_kst_str",
+        "session_id"
+      )
+      .collect()
+      .map(row => (row.getString(0), row.getString(1), row.getString(2), row.getString(3)))
+      .sortBy(_._1)
+
+    assert(rows.length === 2)
+    assert(rows.map(_._2) === Seq("2019-10-01", "2019-10-02"))
+    assert(rows.map(_._3).distinct === Seq("2019-10-01 23:58:00"))
+    assert(rows.map(_._4).distinct.length === 1)
+  }
 }
