@@ -1,4 +1,4 @@
-package state
+package sessionization
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 

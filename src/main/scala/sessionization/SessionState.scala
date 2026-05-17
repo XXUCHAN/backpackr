@@ -1,4 +1,4 @@
-package model
+package sessionization
 
 import java.sql.Timestamp
 

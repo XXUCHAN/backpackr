@@ -1,8 +1,9 @@
 import config.AppConfigParser
-import org.apache.spark.sql.functions.{col, coalesce, lit, not}
 import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchRunStatus}
+import org.apache.spark.sql.functions.{col, coalesce, lit, not}
 import reader.CsvActivityReader
+import sessionization.Sessionizer
 import support.{PathBuilder, PreflightValidator, QualityGate, SparkSessionFactory}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.{ActivityWriter, DlqWriter}
@@ -42,18 +43,20 @@ object ActivityBatchApp {
         val validationResult = Validator(normalized, targetDateColumn)
         val deduplicationResult = Deduplicator.analyze(validationResult.valid)
         val deduplicatedValid = deduplicationResult.deduplicated
+        val sessionizedValid = Sessionizer(deduplicatedValid)
         val duplicates = deduplicationResult.duplicates
 
-        ActivityWriter.writeToStaging(deduplicatedValid, validOutputPath)
+        ActivityWriter.writeToStaging(sessionizedValid, validOutputPath)
         DlqWriter.write(validationResult.invalid, dlqOutputPath)
 
         val inputCount = raw.count()
         val validCount = validationResult.valid.count()
-        val deduplicatedCount = deduplicatedValid.count()
+        val sessionizedCount = sessionizedValid.count()
         val invalidCount = validationResult.invalid.count()
         val duplicateRowsCount = duplicates.count()
         val droppedDuplicateRowsCount = duplicates.filter(not(col("dedup_retained"))).count()
         val duplicateGroupCount = if (duplicateRowsCount > 0L) duplicates.select("dedup_key").distinct().count() else 0L
+        val uniqueSessionCount = sessionizedValid.select("session_id").distinct().count()
         val invalidReasonSummary =
           if (invalidCount > 0L) {
             validationResult.invalid
@@ -65,7 +68,7 @@ object ActivityBatchApp {
           } else {
             Map.empty[String, Long]
           }
-        val outputPartitions = deduplicatedValid
+        val outputPartitions = sessionizedValid
           .select("event_date_kst")
           .distinct()
           .orderBy(col("event_date_kst"))
@@ -78,7 +81,7 @@ object ActivityBatchApp {
           inputRowCount = inputCount,
           validRowCount = validCount,
           invalidRowCount = invalidCount,
-          outputRowCount = deduplicatedCount,
+          outputRowCount = sessionizedCount,
           duplicateGroupCount = duplicateGroupCount,
           duplicateRowsCount = duplicateRowsCount,
           droppedDuplicateRowsCount = droppedDuplicateRowsCount,
@@ -100,11 +103,15 @@ object ActivityBatchApp {
           finalOutputPath = finalOutputPath,
           summary = Some(summary),
           message =
-            if (qualityGateResult.warnings.nonEmpty) Some(qualityGateResult.warnings.mkString("; ")) else None
+            if (qualityGateResult.warnings.nonEmpty) {
+              Some(s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount")
+            } else {
+              Some(s"unique_session_count=$uniqueSessionCount")
+            }
         )
 
         finalOutputPath.foreach { outputPath =>
-          ActivityWriter.writeToFinal(deduplicatedValid, outputPath)
+          ActivityWriter.writeToFinal(sessionizedValid, outputPath)
           BatchRunLogger.logStatus(
             runLogBasePath = config.runLogBasePath,
             runId = config.runId,
@@ -114,7 +121,8 @@ object ActivityBatchApp {
             stagingPath = Some(validOutputPath),
             dlqPath = Some(dlqOutputPath),
             finalOutputPath = Some(outputPath),
-            summary = Some(summary)
+            summary = Some(summary),
+            message = Some(s"unique_session_count=$uniqueSessionCount")
           )
         }
 
@@ -129,7 +137,8 @@ object ActivityBatchApp {
           finalOutputPath = finalOutputPath,
           summary = Some(summary),
           message =
-            if (qualityGateResult.warnings.nonEmpty) Some(qualityGateResult.warnings.mkString("; ")) else None
+            if (qualityGateResult.warnings.nonEmpty) Some(s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount")
+            else Some(s"unique_session_count=$uniqueSessionCount")
         )
 
         println(s"mode=${config.mode.entryName}")
@@ -140,7 +149,8 @@ object ActivityBatchApp {
         finalOutputPath.foreach(path => println(s"final_output_path=$path"))
         println(s"input_row_count=$inputCount")
         println(s"validated_row_count=$validCount")
-        println(s"deduplicated_row_count=$deduplicatedCount")
+        println(s"sessionized_row_count=$sessionizedCount")
+        println(s"unique_session_count=$uniqueSessionCount")
         println(s"duplicate_group_count=$duplicateGroupCount")
         println(s"duplicate_rows_count=$duplicateRowsCount")
         println(s"dropped_duplicate_row_count=$droppedDuplicateRowsCount")

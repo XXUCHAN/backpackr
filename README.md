@@ -48,7 +48,7 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
     │       ├── query/
     │       ├── reader/
     │       ├── schema/
-    │       ├── state/
+    │       ├── sessionization/
     │       ├── support/
     │       ├── transform/
     │       └── writer/
@@ -66,8 +66,8 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 - `config`: 실행 파라미터 파싱
 - `model`: 배치 모드 및 도메인 모델
 - `reader`: CSV 입력 로딩
-- `transform`: validation, deduplication, sessionization
-- `state`: session snapshot 관리
+- `transform`: validation, deduplication
+- `sessionization`: 세션 생성 및 session snapshot 관리
 - `writer`: parquet write, staging publish, partition registration
 - `query`: WAU 계산 쿼리와 DDL 리소스 로딩
 - `logging`: batch run log 기록
@@ -96,6 +96,7 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 - 원천 이벤트 정규화
 - validation / DLQ 분리
 - exact deduplication
+- 기본 sessionization
 - preflight validation
 - batch run log 파일 기록
 - quality gate
@@ -104,7 +105,6 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 
 아직 미구현 상태인 항목은 아래와 같다.
 
-- sessionization
 - `session_state_snapshot`
 - Hive partition 등록
 - WAU 실제 집계 연결

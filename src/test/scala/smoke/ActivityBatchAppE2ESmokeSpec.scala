@@ -5,6 +5,7 @@ import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchMode, BatchRunStatus}
 import org.apache.spark.sql.functions.{col, coalesce, length, lit, not}
 import reader.CsvActivityReader
+import sessionization.Sessionizer
 import support.{DuplicateGroupJsonExporter, PathBuilder, PreflightValidator, QualityGate, SparkFunSuite}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.ActivityWriter
@@ -14,7 +15,7 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.{FileVisitResult, Files, Path, Paths, SimpleFileVisitor}
 
 class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
-  test("real 2019-Oct.csv sample should pass normalize validate dedup and parquet write flow") {
+  test("real 2019-Oct.csv sample should pass normalize validate dedup sessionize and parquet write flow") {
     val inputPath = resolveInputPath()
     assume(Files.exists(inputPath), s"Missing smoke input file: $inputPath")
 
@@ -72,15 +73,18 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       val validationResult = Validator(normalized, targetDateColumn)
       val deduplicationResult = Deduplicator.analyze(validationResult.valid)
       val deduplicated = deduplicationResult.deduplicated.cache()
+      val sessionized = Sessionizer(deduplicated).cache()
       val duplicates = deduplicationResult.duplicates.cache()
 
       val validCount = validationResult.valid.count()
       val invalidCount = validationResult.invalid.count()
       val deduplicatedCount = deduplicated.count()
+      val sessionizedCount = sessionized.count()
       val duplicateRowsCount = duplicates.count()
       val droppedDuplicateCount = duplicates.filter(not(col("dedup_retained"))).count()
       val duplicateGroupCount =
         if (duplicateRowsCount > 0L) duplicates.select("dedup_key").distinct().count() else 0L
+      val uniqueSessionCount = sessionized.select("session_id").distinct().count()
       val invalidReasonSummary =
         if (invalidCount > 0L) {
           validationResult.invalid
@@ -96,11 +100,15 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
 
       assert(validCount + invalidCount === rawCount)
       assert(deduplicatedCount <= validCount)
+      assert(sessionizedCount === deduplicatedCount)
       assert(droppedDuplicateCount === validCount - deduplicatedCount)
       assert(normalized.columns.contains("event_time_utc"))
       assert(normalized.columns.contains("event_time_kst"))
       assert(normalized.columns.contains("event_date_kst"))
       assert(deduplicated.columns.contains("dedup_key"))
+      assert(sessionized.columns.contains("session_start_time_utc"))
+      assert(sessionized.columns.contains("session_start_time_kst"))
+      assert(sessionized.columns.contains("session_id"))
       assert(duplicates.columns.contains("duplicate_group_size"))
       assert(duplicates.columns.contains("duplicate_rank"))
       assert(duplicates.columns.contains("dedup_retained"))
@@ -108,12 +116,16 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       val dedupKeyLengths = deduplicated.select(length(col("dedup_key")).as("dedup_key_length")).distinct().collect()
       assert(dedupKeyLengths.forall(_.getInt(0) == 64))
 
-      ActivityWriter.writeToStaging(deduplicated, validOutputPath)
+      ActivityWriter.writeToStaging(sessionized, validOutputPath)
 
       val written = spark.read.parquet(validOutputPath)
-      assert(written.count() === deduplicatedCount)
+      assert(written.count() === sessionizedCount)
       assert(written.columns.contains("dedup_key"))
+      assert(written.columns.contains("session_start_time_utc"))
+      assert(written.columns.contains("session_start_time_kst"))
+      assert(written.columns.contains("session_id"))
       assert(written.filter(col("event_time_utc").isNull).count() === 0L)
+      assert(written.filter(col("session_id").isNull).count() === 0L)
       assert(written.select("event_date_kst").distinct().count() > 0L)
       val outputPartitions = written
         .select("event_date_kst")
@@ -127,7 +139,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
         inputRowCount = rawCount,
         validRowCount = validCount,
         invalidRowCount = invalidCount,
-        outputRowCount = deduplicatedCount,
+        outputRowCount = sessionizedCount,
         duplicateGroupCount = duplicateGroupCount,
         duplicateRowsCount = duplicateRowsCount,
         droppedDuplicateRowsCount = droppedDuplicateCount,
@@ -197,7 +209,9 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       info(s"Smoke validation passed rows: $validCount")
       info(s"Smoke validation failed rows: $invalidCount")
       info(s"Smoke invalid reason summary: $invalidReasonSummary")
-      info(s"Smoke deduplicated output rows: $deduplicatedCount")
+      info(s"Smoke deduplicated rows: $deduplicatedCount")
+      info(s"Smoke sessionized output rows: $sessionizedCount")
+      info(s"Smoke unique session count: $uniqueSessionCount")
       info(s"Smoke duplicate group count: $duplicateGroupCount")
       info(s"Smoke output path: $validOutputPath")
       info(s"Smoke output partitions: ${outputPartitions.mkString(", ")}")
