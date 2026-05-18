@@ -36,7 +36,11 @@ object ActivityBatchApp {
         startedAt = startedAt,
         stagingPath = Some(validOutputPath),
         dlqPath = Some(dlqOutputPath),
-        finalOutputPath = finalOutputPath
+        finalOutputPath = finalOutputPath,
+        processingStartDate = Some(config.startDate),
+        processingEndDate = Some(config.endDate),
+        snapshotSeedDate = Some(previousSnapshotDate),
+        snapshotTargetDate = Some(config.endDate)
       )
 
       val spark = SparkSessionFactory.create(config.appName)
@@ -116,7 +120,11 @@ object ActivityBatchApp {
               Some(s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount")
             } else {
               Some(s"unique_session_count=$uniqueSessionCount")
-            }
+            },
+          processingStartDate = Some(config.startDate),
+          processingEndDate = Some(config.endDate),
+          snapshotSeedDate = Some(previousSnapshotDate),
+          snapshotTargetDate = Some(config.endDate)
         )
 
         finalOutputPath.foreach { outputPath =>
@@ -135,13 +143,19 @@ object ActivityBatchApp {
             message =
               Some(
                 s"unique_session_count=$uniqueSessionCount; promoted_partitions=${outputPartitions.mkString(",")}"
-              )
+              ),
+            processingStartDate = Some(config.startDate),
+            processingEndDate = Some(config.endDate),
+            snapshotSeedDate = Some(previousSnapshotDate),
+            snapshotTargetDate = Some(config.endDate)
           )
         }
 
-        val sessionSnapshot = SessionStateStore.buildSnapshot(sessionizedValid, targetDate, config.runId)
+        val snapshotTargetDate = config.endDate
+
+        val sessionSnapshot = SessionStateStore.buildSnapshot(sessionizedValid, snapshotTargetDate, config.runId)
         val sessionSnapshotPath =
-          SessionStateStore.saveSnapshot(sessionSnapshot, config.sessionStateBasePath, targetDate)
+          SessionStateStore.saveSnapshot(sessionSnapshot, config.sessionStateBasePath, snapshotTargetDate)
 
         val registeredHivePartitions = finalOutputPath match {
           case Some(outputPath) if shouldRegisterHivePartitions =>
@@ -190,7 +204,11 @@ object ActivityBatchApp {
               Some(
                 s"unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath; registered_hive_partitions=${registeredHivePartitions.size}${wauSummaryMessage.map(value => s"; $value").getOrElse("")}"
               )
-            }
+            },
+          processingStartDate = Some(config.startDate),
+          processingEndDate = Some(config.endDate),
+          snapshotSeedDate = Some(previousSnapshotDate),
+          snapshotTargetDate = Some(config.endDate)
         )
 
         println(s"mode=${config.mode.entryName}")
@@ -242,7 +260,11 @@ object ActivityBatchApp {
           stagingPath = Some(validOutputPath),
           dlqPath = Some(dlqOutputPath),
           finalOutputPath = finalOutputPath,
-          message = Some(error.getMessage)
+          message = Some(error.getMessage),
+          processingStartDate = Some(config.startDate),
+          processingEndDate = Some(config.endDate),
+          snapshotSeedDate = Some(previousSnapshotDate),
+          snapshotTargetDate = Some(config.endDate)
         )
         throw error
     }

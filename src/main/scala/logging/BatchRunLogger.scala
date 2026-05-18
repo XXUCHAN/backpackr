@@ -21,7 +21,11 @@ object BatchRunLogger {
       stagingPath: Option[String] = None,
       dlqPath: Option[String] = None,
       finalOutputPath: Option[String] = None,
-      summary: Option[BatchExecutionSummary] = None
+      summary: Option[BatchExecutionSummary] = None,
+      processingStartDate: Option[String] = None,
+      processingEndDate: Option[String] = None,
+      snapshotSeedDate: Option[String] = None,
+      snapshotTargetDate: Option[String] = None
   ): Unit = {
     val logPath = Paths.get(PathBuilder.batchRunLogPath(runLogBasePath, runId))
     Option(logPath.getParent).foreach(parent => Files.createDirectories(parent))
@@ -37,6 +41,10 @@ object BatchRunLogger {
     stagingPath.foreach(value => payload.put("staging_path", value))
     dlqPath.foreach(value => payload.put("dlq_path", value))
     finalOutputPath.foreach(value => payload.put("final_output_path", value))
+    processingStartDate.foreach(value => payload.put("processing_start_date", value))
+    processingEndDate.foreach(value => payload.put("processing_end_date", value))
+    snapshotSeedDate.foreach(value => payload.put("snapshot_seed_date", value))
+    snapshotTargetDate.foreach(value => payload.put("snapshot_target_date", value))
 
     summary.foreach { metrics =>
       payload.put("input_row_count", metrics.inputRowCount)

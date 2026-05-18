@@ -174,8 +174,10 @@ sbt \
 - `SessionStateStore`
   - `D-1` snapshot을 seed로 읽고 당일 snapshot 저장
 
-## 현재 한계
+## 한계 및 향후 개선 과제 (Future Works)
 
-- session snapshot은 과제 범위상 `D-1` seed 기반까지만 구현했다.
-- 다중 일자 backfill 전체에 대한 snapshot 재계산 자동화는 포함하지 않았다.
-- promote 실패 후 자동 재시도는 아직 미구현이다.
+**1. 지연 도착 데이터 (Late Arrival Data) 병합**
+현재는 파라미터로 입력받은 일자 범위(start-date ~ end-date) 외의 과거 이벤트가 유입될 경우 제외됩니다. 실무 환경에서는 이를 버리지 않고 기존 파티션에 안전하게 끼워 넣는(Merge/Upsert) 로직이 추가로 고려되어야 합니다.
+
+**2. 원자적 배포 (Promote) 실패 복구**
+Staging 경로에서 Final 파티션으로 데이터를 Promote 하는 과정에서 시스템 에러가 발생할 경우를 대비한 롤백(Rollback) 및 자동 재시도 메커니즘 보강이 필요합니다.
