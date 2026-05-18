@@ -2,6 +2,7 @@ import config.AppConfigParser
 import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchRunStatus}
 import org.apache.spark.sql.functions.{col, coalesce, lit, not}
+import query.HiveTableManager
 import reader.CsvActivityReader
 import sessionization.{SessionStateStore, Sessionizer}
 import support.{PathBuilder, PreflightValidator, QualityGate, SparkSessionFactory}
@@ -133,6 +134,14 @@ object ActivityBatchApp {
         val sessionSnapshotPath =
           SessionStateStore.saveSnapshot(sessionSnapshot, config.sessionStateBasePath, targetDate)
 
+        val registeredHivePartitions = finalOutputPath match {
+          case Some(outputPath) if config.registerHivePartitions =>
+            HiveTableManager.createActivityEventsTable(spark, config.hiveTableName, outputPath)
+            HiveTableManager.addPartitions(spark, config.hiveTableName, outputPath, outputPartitions)
+          case _ =>
+            Seq.empty[String]
+        }
+
         BatchRunLogger.logStatus(
           runLogBasePath = config.runLogBasePath,
           runId = config.runId,
@@ -144,8 +153,15 @@ object ActivityBatchApp {
           finalOutputPath = finalOutputPath,
           summary = Some(summary),
           message =
-            if (qualityGateResult.warnings.nonEmpty) Some(s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath")
-            else Some(s"unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath")
+            if (qualityGateResult.warnings.nonEmpty) {
+              Some(
+                s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath; registered_hive_partitions=${registeredHivePartitions.size}"
+              )
+            } else {
+              Some(
+                s"unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath; registered_hive_partitions=${registeredHivePartitions.size}"
+              )
+            }
         )
 
         println(s"mode=${config.mode.entryName}")
@@ -154,6 +170,7 @@ object ActivityBatchApp {
         println(s"valid_output_path=$validOutputPath")
         println(s"dlq_output_path=$dlqOutputPath")
         println(s"session_snapshot_path=$sessionSnapshotPath")
+        println(s"registered_hive_partitions_count=${registeredHivePartitions.size}")
         finalOutputPath.foreach(path => println(s"final_output_path=$path"))
         println(s"input_row_count=$inputCount")
         println(s"validated_row_count=$validCount")

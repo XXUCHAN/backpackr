@@ -45,6 +45,10 @@ object AppConfigParser {
           .action((value, config) => config.copy(sessionStateBasePath = value)),
         opt[String]("run-log-base-path")
           .action((value, config) => config.copy(runLogBasePath = value)),
+        opt[String]("hive-table-name")
+          .action((value, config) => config.copy(hiveTableName = value)),
+        opt[Unit]("register-hive-partitions")
+          .action((_, config) => config.copy(registerHivePartitions = true)),
         opt[String]("checkpoint-base-path")
           .action((value, config) => config.copy(checkpointBasePath = value)),
         opt[String]("run-id")

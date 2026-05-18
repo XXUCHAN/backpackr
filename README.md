@@ -103,6 +103,7 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 - quality gate
 - staging parquet write
 - optional final output write
+- Hive external table 생성 및 partition 등록
 
 아직 미구현 상태인 항목은 아래와 같다.
 
@@ -237,6 +238,24 @@ sbt \
 - `batch-run-log.json` 경로
 - `duplicate-groups.json` 경로
 
+### 3. Hive external table E2E 스모크 테스트
+
+같은 스모크 파일 안에서 `2019-Oct.csv` sample로 final parquet를 생성한 뒤 external table 생성, partition 등록, query까지 확인한다.
+
+```bash
+/usr/bin/env \
+JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home \
+PATH=/opt/homebrew/opt/openjdk@17/bin:/opt/homebrew/bin:/usr/bin:/bin \
+COURSIER_CACHE="$PROJECT_ROOT/.coursier" \
+HIVE_SMOKE_SAMPLE_LIMIT=1000 \
+sbt \
+  -Dsbt.global.base="$PROJECT_ROOT/.sbt" \
+  -Dsbt.boot.directory="$PROJECT_ROOT/.sbt/boot" \
+  -Dsbt.ivy.home="$PROJECT_ROOT/.ivy2" \
+  -Dsbt.coursier.home="$PROJECT_ROOT/.coursier" \
+  "testOnly smoke.ActivityBatchAppE2ESmokeSpec -- -z \"Hive external table\""
+```
+
 ## Running Locally
 
 현재 구현 기준에서 실제로 실행 가능한 경로는 `sbt run` 기반 로컬 Spark 검증이다.
@@ -323,8 +342,9 @@ invalid row가 존재하면 `reject_reason` 집계도 함께 출력한다.
 실데이터 기반 스모크 테스트는 아래 산출물을 함께 남길 수 있다.
 
 - valid parquet: `.tmp/smoke-output/<run-name>/valid/`
-- duplicates parquet: `.tmp/smoke-output/<run-name>/duplicates/`
-- duplicate groups pretty JSON: `.tmp/smoke-output/<run-name>/duplicate-groups.json`
+- duplicates parquet: `.tmp/smoke-output/<run-name>/duplicates/parquet/`
+- duplicate groups pretty JSON: `.tmp/smoke-output/<run-name>/duplicates/duplicate-groups.json`
+- session snapshot pretty JSON: `.tmp/smoke-output/<run-name>/session-state/session-snapshot.json`
 
 `duplicate-groups.json`은 사람이 바로 확인할 수 있도록 pretty JSON 형태로 저장되며, 각 중복 그룹에 대해 아래 구조를 가진다.
 

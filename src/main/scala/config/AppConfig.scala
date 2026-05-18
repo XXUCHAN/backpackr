@@ -14,6 +14,8 @@ final case class AppConfig(
     dlqBasePath: String = "",
     sessionStateBasePath: String = ".tmp/session-state",
     runLogBasePath: String = ".tmp/batch-run-log",
+    hiveTableName: String = "activity_events",
+    registerHivePartitions: Boolean = false,
     checkpointBasePath: String = "",
     runId: String = ""
 )

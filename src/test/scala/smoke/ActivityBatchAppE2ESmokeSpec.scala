@@ -4,15 +4,17 @@ import config.AppConfig
 import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchMode, BatchRunStatus}
 import org.apache.spark.sql.functions.{col, coalesce, length, lit, not}
+import query.HiveTableManager
 import reader.CsvActivityReader
 import sessionization.{SessionStateStore, Sessionizer}
-import support.{DuplicateGroupJsonExporter, PathBuilder, PreflightValidator, QualityGate, SparkFunSuite}
+import support.{DuplicateGroupJsonExporter, PathBuilder, PreflightValidator, QualityGate, SessionSnapshotJsonExporter, SparkFunSuite, TestHiveSparkSessionFactory}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.ActivityWriter
 
 import java.time.Instant
 import java.nio.file.attribute.BasicFileAttributes
 import java.nio.file.{FileVisitResult, Files, Path, Paths, SimpleFileVisitor}
+import org.apache.spark.sql.SparkSession
 
 class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
   test("real 2019-Oct.csv sample should pass normalize validate dedup sessionize and parquet write flow") {
@@ -24,9 +26,11 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
     val persistentBaseDir = resolveOutputPath()
     val tempBaseDir = persistentBaseDir.getOrElse(Files.createTempDirectory("activity-oct-e2e-smoke-"))
     val validOutputPath = tempBaseDir.resolve("valid").toString
-    val duplicateOutputPath = tempBaseDir.resolve("duplicates").toString
-    val duplicateGroupJsonOutputPath = tempBaseDir.resolve("duplicate-groups.json").toString
+    val duplicateBasePath = tempBaseDir.resolve("duplicates")
+    val duplicateOutputPath = duplicateBasePath.resolve("parquet").toString
+    val duplicateGroupJsonOutputPath = tempBaseDir.resolve("duplicates").resolve("duplicate-groups.json").toString
     val sessionSnapshotBasePath = tempBaseDir.resolve("session-state").toString
+    val sessionSnapshotJsonOutputPath = tempBaseDir.resolve("session-state").resolve("session-snapshot.json").toString
     val preflightStagingBasePath = tempBaseDir.resolve("staging").toString
     val preflightDlqBasePath = tempBaseDir.resolve("dlq").toString
     val preflightRunLogBasePath = tempBaseDir.resolve("batch-run-log").toString
@@ -164,6 +168,8 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
         if (qualityGateResult.warnings.isEmpty) "PASS" else s"PASS_WITH_WARNING (${qualityGateResult.warnings.mkString("; ")})"
       val sessionSnapshot = SessionStateStore.buildSnapshot(sessionized, targetDate, runId)
       val sessionSnapshotPath = SessionStateStore.saveSnapshot(sessionSnapshot, sessionSnapshotBasePath, targetDate)
+      SessionSnapshotJsonExporter.writePrettyJson(sessionSnapshot, sessionSnapshotJsonOutputPath)
+      assert(Files.exists(Paths.get(sessionSnapshotJsonOutputPath)))
 
       BatchRunLogger.logStatus(
         runLogBasePath = preflightRunLogBasePath,
@@ -202,31 +208,20 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       )
       assert(Files.exists(Paths.get(batchRunLogPath)))
 
-      info("Smoke preflight status: PASS")
-      info(s"Smoke quality gate status: $qualityGateStatus")
-      info("Smoke batch run status: SUCCESS")
-      info(s"Smoke batch run log path: $batchRunLogPath")
-      info(s"Smoke session snapshot path: $sessionSnapshotPath")
-      info(s"Smoke input path: $inputPath")
-      info(s"Smoke sample limit requested: $sampleSize")
-      info(s"Smoke raw rows read: $rawCount")
-      info(s"Smoke validation passed rows: $validCount")
-      info(s"Smoke validation failed rows: $invalidCount")
-      info(s"Smoke invalid reason summary: $invalidReasonSummary")
-      info(s"Smoke deduplicated rows: $deduplicatedCount")
-      info(s"Smoke sessionized output rows: $sessionizedCount")
-      info(s"Smoke unique session count: $uniqueSessionCount")
-      info(s"Smoke duplicate group count: $duplicateGroupCount")
-      info(s"Smoke output path: $validOutputPath")
-      info(s"Smoke output partitions: ${outputPartitions.mkString(", ")}")
+      info(s"Smoke status: preflight=PASS quality=$qualityGateStatus batch=SUCCESS")
       info(
-        s"Smoke duplicate output path: ${if (duplicateRowsCount > 0L) duplicateOutputPath else "(not generated)"}"
+        s"Smoke summary: sample=$sampleSize raw=$rawCount valid=$validCount invalid=$invalidCount " +
+          s"deduplicated=$deduplicatedCount sessionized=$sessionizedCount unique_sessions=$uniqueSessionCount " +
+          s"duplicate_groups=$duplicateGroupCount duplicate_rows=$duplicateRowsCount dropped_duplicates=$droppedDuplicateCount"
       )
       info(
-        s"Smoke duplicate group json output path: ${if (duplicateRowsCount > 0L) duplicateGroupJsonOutputPath else "(not generated)"}"
+        s"Smoke artifacts: partitions=${outputPartitions.mkString(", ")} valid=$validOutputPath " +
+          s"batch_run_log=$batchRunLogPath session_snapshot_json=$sessionSnapshotJsonOutputPath " +
+          s"duplicate_json=${if (duplicateRowsCount > 0L) duplicateGroupJsonOutputPath else "(not generated)"}"
       )
-      info(s"Smoke duplicate rows: $duplicateRowsCount")
-      info(s"Smoke dropped duplicate rows: $droppedDuplicateCount")
+      if (invalidCount > 0L) {
+        info(s"Smoke invalid reason summary: $invalidReasonSummary")
+      }
     } catch {
       case error: Throwable =>
         if (runLogInitialized) {
@@ -243,6 +238,85 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
         }
         throw error
     } finally {
+      if (persistentBaseDir.isEmpty) {
+        deleteRecursively(tempBaseDir)
+      }
+    }
+  }
+
+  test("real 2019-Oct.csv sample should create and query Hive external table") {
+    stopSparkSession()
+
+    val inputPath = resolveHiveInputPath()
+    assume(Files.exists(inputPath), s"Missing hive smoke input file: $inputPath")
+
+    val sampleSize = resolveHiveSampleSize()
+    val tableName = "activity_events_smoke"
+    val persistentBaseDir = resolveHiveOutputPath()
+    val tempBaseDir = persistentBaseDir.getOrElse(Files.createTempDirectory("activity-hive-e2e-smoke-"))
+    val finalOutputPath = tempBaseDir.resolve("final-output").toString
+    val warehouseDir = tempBaseDir.resolve("warehouse")
+    val metastoreDir = tempBaseDir.resolve("metastore_db")
+    val sessionSnapshotBasePath = tempBaseDir.resolve("session-state").toString
+
+    val hiveSpark = TestHiveSparkSessionFactory.create("activity-hive-e2e-smoke", warehouseDir, metastoreDir)
+
+    try {
+      val raw = CsvActivityReader.read(hiveSpark, inputPath.toString).limit(sampleSize).cache()
+      val rawCount = raw.count()
+
+      assert(rawCount > 0L)
+
+      val normalized = ActivityNormalizer(raw, "hive_e2e_smoke")
+      val targetDateColumn = coalesce(col("event_date_kst").cast("string"), lit("2019-10-01"))
+      val validationResult = Validator(normalized, targetDateColumn)
+      val deduplicationResult = Deduplicator.analyze(validationResult.valid)
+      val sessionized = Sessionizer(deduplicationResult.deduplicated).cache()
+      val sessionSnapshot = SessionStateStore.buildSnapshot(sessionized, "2019-10-01", "hive_e2e_smoke")
+
+      val sessionizedCount = sessionized.count()
+      val invalidCount = validationResult.invalid.count()
+      val outputPartitions = sessionized
+        .select("event_date_kst")
+        .distinct()
+        .orderBy(col("event_date_kst"))
+        .collect()
+        .map(_.getDate(0).toString)
+        .toSeq
+
+      assert(sessionizedCount > 0L)
+
+      ActivityWriter.writeToFinal(sessionized, finalOutputPath)
+      SessionStateStore.saveSnapshot(sessionSnapshot, sessionSnapshotBasePath, "2019-10-01")
+
+      HiveTableManager.createActivityEventsTable(hiveSpark, tableName, finalOutputPath)
+      val registeredPartitions = HiveTableManager.addPartitions(hiveSpark, tableName, finalOutputPath, outputPartitions)
+
+      assert(hiveSpark.catalog.tableExists(tableName))
+      assert(registeredPartitions.size === outputPartitions.size)
+
+      val tableDf = hiveSpark.table(tableName)
+      assert(tableDf.count() === sessionizedCount)
+      assert(tableDf.columns.contains("session_id"))
+      assert(tableDf.columns.contains("session_start_time_utc"))
+
+      val shownPartitions = hiveSpark.sql(s"SHOW PARTITIONS $tableName").collect().map(_.getString(0)).toSeq
+      assert(shownPartitions.size === outputPartitions.size)
+
+      info("Hive smoke status: SUCCESS")
+      info(
+        s"Hive smoke summary: sample=$sampleSize raw=$rawCount invalid=$invalidCount sessionized=$sessionizedCount " +
+          s"table=$tableName partitions=${outputPartitions.mkString(", ")}"
+      )
+      info(
+        s"Hive smoke artifacts: final_output=$finalOutputPath warehouse=$warehouseDir metastore=$metastoreDir " +
+          s"registered_partitions=${registeredPartitions.size}"
+      )
+    } finally {
+      hiveSpark.stop()
+      SparkSession.clearActiveSession()
+      SparkSession.clearDefaultSession()
+
       if (persistentBaseDir.isEmpty) {
         deleteRecursively(tempBaseDir)
       }
@@ -273,6 +347,38 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
     sys.props
       .get("smoke.output.path")
       .orElse(sys.env.get("SMOKE_OUTPUT_PATH"))
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(Paths.get(_))
+
+  private def resolveHiveInputPath(): Path = {
+    val defaultPath = Paths.get(sys.props.getOrElse("user.dir", ".")).resolve(".data/2019-Oct.csv")
+
+    sys.props
+      .get("hive.smoke.input.path")
+      .orElse(sys.env.get("HIVE_SMOKE_INPUT_PATH"))
+      .orElse(sys.props.get("smoke.input.path"))
+      .orElse(sys.env.get("SMOKE_INPUT_PATH"))
+      .map(Paths.get(_))
+      .getOrElse(defaultPath)
+  }
+
+  private def resolveHiveSampleSize(): Int =
+    sys.props
+      .get("hive.smoke.sample.limit")
+      .orElse(sys.env.get("HIVE_SMOKE_SAMPLE_LIMIT"))
+      .orElse(sys.props.get("smoke.sample.limit"))
+      .orElse(sys.env.get("SMOKE_SAMPLE_LIMIT"))
+      .map(_.trim)
+      .filter(_.nonEmpty)
+      .map(_.toInt)
+      .filter(_ > 0)
+      .getOrElse(1000)
+
+  private def resolveHiveOutputPath(): Option[Path] =
+    sys.props
+      .get("hive.smoke.output.path")
+      .orElse(sys.env.get("HIVE_SMOKE_OUTPUT_PATH"))
       .map(_.trim)
       .filter(_.nonEmpty)
       .map(Paths.get(_))

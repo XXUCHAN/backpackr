@@ -30,6 +30,13 @@ object PreflightValidator {
 
     val runLogPath = Paths.get(PathBuilder.batchRunLogPath(config.runLogBasePath, config.runId))
     require(!Files.exists(runLogPath), s"batch run log path for run_id already exists: $runLogPath")
+
+    if (config.registerHivePartitions) {
+      require(
+        Option(config.outputBasePath).exists(_.trim.nonEmpty),
+        "output-base-path must be provided when register-hive-partitions is enabled"
+      )
+    }
   }
 
   private def parseDate(value: String, fieldName: String): LocalDate =
