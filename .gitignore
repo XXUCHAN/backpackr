@@ -14,5 +14,4 @@ target/
 *.tmp
 .DS_Store
 .data
-docs
 metastore_db/
