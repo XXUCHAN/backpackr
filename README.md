@@ -1,7 +1,7 @@
 # Activity ETL & WAU
 
 Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned parquet dataset과 Hive external table을 생성하는 과제 프로젝트다.  
-현재 구현 범위는 정규화, validation/DLQ, exact dedup, sessionization, session snapshot, staging 기반 publish, Hive external table 등록까지다.
+현재 구현 범위는 정규화, validation/DLQ, exact dedup, sessionization, session snapshot, staging 기반 publish, Hive external table 등록, WAU 실행 및 결과 저장까지다.
 
 ## 구현 범위
 
@@ -13,6 +13,7 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 - Parquet + Snappy 적재
 - staging -> final partition promote
 - Hive external table 생성 및 partition 등록
+- Hive external table 기준 WAU 실행 및 결과 저장
 - preflight validation / quality gate / batch run log 기록
 
 ## 기술 스택
@@ -79,23 +80,30 @@ sbt \
   -Dsbt.boot.directory="$PROJECT_ROOT/.sbt/boot" \
   -Dsbt.ivy.home="$PROJECT_ROOT/.ivy2" \
   -Dsbt.coursier.home="$PROJECT_ROOT/.coursier" \
-  "run --mode daily \
-    --start-date 2019-10-01 \
+  "run --start-date 2019-10-01 \
     --end-date 2019-11-30 \
     --input-path $PROJECT_ROOT/.data \
-    --staging-base-path $PROJECT_ROOT/.tmp/staging \
-    --dlq-base-path $PROJECT_ROOT/.tmp/dlq \
-    --session-state-base-path $PROJECT_ROOT/.tmp/session-state \
-    --run-log-base-path $PROJECT_ROOT/.tmp/batch-run-log \
-    --output-base-path $PROJECT_ROOT/.tmp/final-output \
     --run-id local_run_001"
 ```
 
-Hive partition 등록까지 함께 보려면 아래 옵션을 추가한다.
+WAU까지 함께 실행하려면 아래 옵션을 추가한다.
 
 ```bash
---register-hive-partitions --hive-table-name activity_events
+--execute-wau
 ```
+
+기본값으로 사용되는 경로와 설정은 아래와 같다.
+
+- `mode = daily`
+- `staging-base-path = .tmp/staging`
+- `dlq-base-path = .tmp/dlq`
+- `session-state-base-path = .tmp/session-state`
+- `run-log-base-path = .tmp/batch-run-log`
+- `output-base-path = .tmp/final-output`
+- `wau-output-base-path = .tmp/wau-results`
+- `hive-table-name = activity_events`
+
+`--execute-wau`를 주면 Hive external table 생성과 partition 등록도 함께 수행한다.
 
 ### 2. 검증
 
@@ -135,7 +143,11 @@ sbt \
 - DLQ output: `.tmp/dlq/run_id=<run_id>/invalid/`
 - session snapshot: `.tmp/session-state/snapshot_date_kst=<target_date>/`
 - batch run log: `.tmp/batch-run-log/run_id=<run_id>/batch-run-log.json`
+  - `RUNNING -> VALIDATED -> PROMOTED -> SUCCESS/FAILED` 상태 이력이 append 방식으로 저장됨
 - final output: `.tmp/final-output/event_date_kst=...`
+- WAU output
+  - `.tmp/wau-results/run_id=<run_id>/wau-users/`
+  - `.tmp/wau-results/run_id=<run_id>/weekly-active-sessions/`
 
 스모크 테스트 실행 시에는 아래 추가 산출물을 확인할 수 있다.
 
@@ -158,17 +170,12 @@ sbt \
   - final 경로 직접 write 금지
   - staging에 먼저 write 후 검증 통과 시 partition promote
 - `BatchRunLogger`
-  - `RUNNING`
-  - `VALIDATED`
-  - `PROMOTED`
-  - `SUCCESS`
-  - `FAILED`
+  - 상태 이력을 append 방식의 JSON 배열로 기록
 - `SessionStateStore`
   - `D-1` snapshot을 seed로 읽고 당일 snapshot 저장
 
 ## 현재 한계
 
-- WAU 실행 및 결과 저장은 아직 연결 전이다.
 - session snapshot은 과제 범위상 `D-1` seed 기반까지만 구현했다.
 - 다중 일자 backfill 전체에 대한 snapshot 재계산 자동화는 포함하지 않았다.
 - promote 실패 후 자동 재시도는 아직 미구현이다.

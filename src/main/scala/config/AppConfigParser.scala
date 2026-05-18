@@ -16,7 +16,6 @@ object AppConfigParser {
         opt[String]("app-name")
           .action((value, config) => config.copy(appName = value)),
         opt[String]("mode")
-          .required()
           .validate {
             case "daily" | "backfill" => success
             case other                => failure(s"Unsupported mode: $other")
@@ -36,19 +35,21 @@ object AppConfigParser {
         opt[String]("output-base-path")
           .action((value, config) => config.copy(outputBasePath = value)),
         opt[String]("staging-base-path")
-          .required()
           .action((value, config) => config.copy(stagingBasePath = value)),
         opt[String]("dlq-base-path")
-          .required()
           .action((value, config) => config.copy(dlqBasePath = value)),
         opt[String]("session-state-base-path")
           .action((value, config) => config.copy(sessionStateBasePath = value)),
         opt[String]("run-log-base-path")
           .action((value, config) => config.copy(runLogBasePath = value)),
+        opt[String]("wau-output-base-path")
+          .action((value, config) => config.copy(wauOutputBasePath = value)),
         opt[String]("hive-table-name")
           .action((value, config) => config.copy(hiveTableName = value)),
         opt[Unit]("register-hive-partitions")
           .action((_, config) => config.copy(registerHivePartitions = true)),
+        opt[Unit]("execute-wau")
+          .action((_, config) => config.copy(executeWau = true)),
         opt[String]("checkpoint-base-path")
           .action((value, config) => config.copy(checkpointBasePath = value)),
         opt[String]("run-id")

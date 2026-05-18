@@ -2,10 +2,10 @@ import config.AppConfigParser
 import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchRunStatus}
 import org.apache.spark.sql.functions.{col, coalesce, lit, not}
-import query.HiveTableManager
+import query.{HiveTableManager, WauQueryExecutor}
 import reader.CsvActivityReader
 import sessionization.{SessionStateStore, Sessionizer}
-import support.{PathBuilder, PreflightValidator, QualityGate, SparkSessionFactory}
+import support.{EventDateRangeFilter, PathBuilder, PreflightValidator, QualityGate, SparkSessionFactory}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.{ActivityWriter, DlqWriter}
 
@@ -21,6 +21,10 @@ object ActivityBatchApp {
     val validOutputPath = s"${PathBuilder.stagingRunPath(config.stagingBasePath, config.runId)}/valid"
     val dlqOutputPath = s"${PathBuilder.stagingRunPath(config.dlqBasePath, config.runId)}/invalid"
     val finalOutputPath = Option(config.outputBasePath).map(_.trim).filter(_.nonEmpty)
+    val shouldRegisterHivePartitions = config.registerHivePartitions || config.executeWau
+    val wauRunPath = PathBuilder.wauRunPath(config.wauOutputBasePath, config.runId)
+    val wauUsersOutputPath = s"$wauRunPath/wau-users"
+    val weeklyActiveSessionsOutputPath = s"$wauRunPath/weekly-active-sessions"
 
     try {
       PreflightValidator.validate(config)
@@ -44,7 +48,8 @@ object ActivityBatchApp {
         val normalized = ActivityNormalizer(raw, config.runId)
         val targetDateColumn = coalesce(col("event_date_kst").cast("string"), lit(config.startDate))
         val validationResult = Validator(normalized, targetDateColumn)
-        val deduplicationResult = Deduplicator.analyze(validationResult.valid)
+        val rangeFilteredValid = EventDateRangeFilter.filter(validationResult.valid, config.startDate, config.endDate)
+        val deduplicationResult = Deduplicator.analyze(rangeFilteredValid)
         val deduplicatedValid = deduplicationResult.deduplicated
         val previousSnapshot = SessionStateStore.loadSnapshot(spark, config.sessionStateBasePath, previousSnapshotDate)
         val sessionizedValid = Sessionizer(deduplicatedValid, previousSnapshot)
@@ -54,7 +59,7 @@ object ActivityBatchApp {
         DlqWriter.write(validationResult.invalid, dlqOutputPath)
 
         val inputCount = raw.count()
-        val validCount = validationResult.valid.count()
+        val validCount = rangeFilteredValid.count()
         val sessionizedCount = sessionizedValid.count()
         val invalidCount = validationResult.invalid.count()
         val duplicateRowsCount = duplicates.count()
@@ -139,12 +144,32 @@ object ActivityBatchApp {
           SessionStateStore.saveSnapshot(sessionSnapshot, config.sessionStateBasePath, targetDate)
 
         val registeredHivePartitions = finalOutputPath match {
-          case Some(outputPath) if config.registerHivePartitions =>
+          case Some(outputPath) if shouldRegisterHivePartitions =>
             HiveTableManager.createActivityEventsTable(spark, config.hiveTableName, outputPath)
             HiveTableManager.addPartitions(spark, config.hiveTableName, outputPath, outputPartitions)
           case _ =>
             Seq.empty[String]
         }
+
+        val wauSummaryMessage =
+          if (config.executeWau) {
+            val userWau = WauQueryExecutor.runUserWau(spark, config.hiveTableName)
+            val weeklyActiveSessions = WauQueryExecutor.runWeeklyActiveSessions(spark, config.hiveTableName)
+
+            WauQueryExecutor.writeResult(userWau, wauUsersOutputPath)
+            WauQueryExecutor.writeResult(weeklyActiveSessions, weeklyActiveSessionsOutputPath)
+
+            println("wau_users:")
+            userWau.show(100, truncate = false)
+            println("weekly_active_sessions:")
+            weeklyActiveSessions.show(100, truncate = false)
+
+            Some(
+              s"wau_users_output_path=$wauUsersOutputPath; weekly_active_sessions_output_path=$weeklyActiveSessionsOutputPath"
+            )
+          } else {
+            None
+          }
 
         BatchRunLogger.logStatus(
           runLogBasePath = config.runLogBasePath,
@@ -159,11 +184,11 @@ object ActivityBatchApp {
           message =
             if (qualityGateResult.warnings.nonEmpty) {
               Some(
-                s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath; registered_hive_partitions=${registeredHivePartitions.size}"
+                s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath; registered_hive_partitions=${registeredHivePartitions.size}${wauSummaryMessage.map(value => s"; $value").getOrElse("")}"
               )
             } else {
               Some(
-                s"unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath; registered_hive_partitions=${registeredHivePartitions.size}"
+                s"unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath; registered_hive_partitions=${registeredHivePartitions.size}${wauSummaryMessage.map(value => s"; $value").getOrElse("")}"
               )
             }
         )
@@ -176,6 +201,10 @@ object ActivityBatchApp {
         println(s"session_snapshot_path=$sessionSnapshotPath")
         println(s"registered_hive_partitions_count=${registeredHivePartitions.size}")
         finalOutputPath.foreach(path => println(s"final_output_path=$path"))
+        if (config.executeWau) {
+          println(s"wau_users_output_path=$wauUsersOutputPath")
+          println(s"weekly_active_sessions_output_path=$weeklyActiveSessionsOutputPath")
+        }
         println(s"input_row_count=$inputCount")
         println(s"validated_row_count=$validCount")
         println(s"sessionized_row_count=$sessionizedCount")

@@ -117,4 +117,24 @@ class PreflightValidatorSpec extends AnyFunSuite {
 
     assert(error.getMessage.contains("output-base-path must be provided"))
   }
+
+  test("preflight validator should pass when execute-wau is enabled with default final output path") {
+    val baseDir = Files.createTempDirectory("preflight-execute-wau-")
+    val inputFile = Files.createTempFile(baseDir, "input", ".csv")
+
+    val config = AppConfig(
+      mode = BatchMode.Daily,
+      startDate = "2019-10-01",
+      endDate = "2019-10-31",
+      inputPath = inputFile.toString,
+      stagingBasePath = baseDir.resolve("staging").toString,
+      dlqBasePath = baseDir.resolve("dlq").toString,
+      runLogBasePath = baseDir.resolve("run-log").toString,
+      outputBasePath = baseDir.resolve("final-output").toString,
+      executeWau = true,
+      runId = "run-1"
+    )
+
+    PreflightValidator.validate(config)
+  }
 }

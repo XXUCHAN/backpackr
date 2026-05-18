@@ -4,10 +4,10 @@ import config.AppConfig
 import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchMode, BatchRunStatus}
 import org.apache.spark.sql.functions.{col, coalesce, length, lit, not}
-import query.HiveTableManager
+import query.{HiveTableManager, WauQueryExecutor}
 import reader.CsvActivityReader
 import sessionization.{SessionStateStore, Sessionizer}
-import support.{DuplicateGroupJsonExporter, PathBuilder, PreflightValidator, QualityGate, SessionSnapshotJsonExporter, SparkFunSuite, TestHiveSparkSessionFactory}
+import support.{DuplicateGroupJsonExporter, EventDateRangeFilter, PathBuilder, PreflightValidator, QualityGate, SessionSnapshotJsonExporter, SparkFunSuite, TestHiveSparkSessionFactory}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.ActivityWriter
 
@@ -76,12 +76,13 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       val normalized = ActivityNormalizer(raw, runId)
       val targetDateColumn = coalesce(col("event_date_kst").cast("string"), lit("2019-10-01"))
       val validationResult = Validator(normalized, targetDateColumn)
-      val deduplicationResult = Deduplicator.analyze(validationResult.valid)
+      val rangeFilteredValid = EventDateRangeFilter.filter(validationResult.valid, "2019-10-01", "2019-10-01")
+      val deduplicationResult = Deduplicator.analyze(rangeFilteredValid)
       val deduplicated = deduplicationResult.deduplicated.cache()
       val sessionized = Sessionizer(deduplicated).cache()
       val duplicates = deduplicationResult.duplicates.cache()
 
-      val validCount = validationResult.valid.count()
+      val validCount = rangeFilteredValid.count()
       val invalidCount = validationResult.invalid.count()
       val deduplicatedCount = deduplicated.count()
       val sessionizedCount = sessionized.count()
@@ -256,6 +257,9 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
     val tempBaseDir = persistentBaseDir.getOrElse(Files.createTempDirectory("activity-hive-e2e-smoke-"))
     val stagingOutputPath = tempBaseDir.resolve("staging-valid").toString
     val finalOutputPath = tempBaseDir.resolve("final-output").toString
+    val wauOutputBasePath = tempBaseDir.resolve("wau-results").toString
+    val wauUsersOutputPath = s"${wauOutputBasePath}/wau-users"
+    val weeklyActiveSessionsOutputPath = s"${wauOutputBasePath}/weekly-active-sessions"
     val warehouseDir = tempBaseDir.resolve("warehouse")
     val metastoreDir = tempBaseDir.resolve("metastore_db")
     val sessionSnapshotBasePath = tempBaseDir.resolve("session-state").toString
@@ -271,7 +275,8 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       val normalized = ActivityNormalizer(raw, "hive_e2e_smoke")
       val targetDateColumn = coalesce(col("event_date_kst").cast("string"), lit("2019-10-01"))
       val validationResult = Validator(normalized, targetDateColumn)
-      val deduplicationResult = Deduplicator.analyze(validationResult.valid)
+      val rangeFilteredValid = EventDateRangeFilter.filter(validationResult.valid, "2019-10-01", "2019-10-01")
+      val deduplicationResult = Deduplicator.analyze(rangeFilteredValid)
       val sessionized = Sessionizer(deduplicationResult.deduplicated).cache()
       val sessionSnapshot = SessionStateStore.buildSnapshot(sessionized, "2019-10-01", "hive_e2e_smoke")
 
@@ -295,6 +300,13 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       HiveTableManager.createActivityEventsTable(hiveSpark, tableName, finalOutputPath)
       val registeredPartitions = HiveTableManager.addPartitions(hiveSpark, tableName, finalOutputPath, outputPartitions)
 
+      val userWau = WauQueryExecutor.runUserWau(hiveSpark, tableName)
+      val weeklyActiveSessions = WauQueryExecutor.runWeeklyActiveSessions(hiveSpark, tableName)
+      WauQueryExecutor.writeResult(userWau, wauUsersOutputPath)
+      WauQueryExecutor.writeResult(weeklyActiveSessions, weeklyActiveSessionsOutputPath)
+      val userWauRowCount = userWau.count()
+      val weeklyActiveSessionRowCount = weeklyActiveSessions.count()
+
       assert(hiveSpark.catalog.tableExists(tableName))
       assert(promotedPaths.size === outputPartitions.size)
       assert(registeredPartitions.size === outputPartitions.size)
@@ -306,15 +318,20 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
 
       val shownPartitions = hiveSpark.sql(s"SHOW PARTITIONS $tableName").collect().map(_.getString(0)).toSeq
       assert(shownPartitions.size === outputPartitions.size)
+      assert(userWauRowCount > 0L)
+      assert(weeklyActiveSessionRowCount > 0L)
+      assert(hiveSpark.read.parquet(wauUsersOutputPath).count() > 0L)
+      assert(hiveSpark.read.parquet(weeklyActiveSessionsOutputPath).count() > 0L)
 
       info("Hive smoke status: SUCCESS")
       info(
         s"Hive smoke summary: sample=$sampleSize raw=$rawCount invalid=$invalidCount sessionized=$sessionizedCount " +
-          s"table=$tableName partitions=${outputPartitions.mkString(", ")} promoted=${promotedPaths.size}"
+        s"table=$tableName partitions=${outputPartitions.mkString(", ")} promoted=${promotedPaths.size} " +
+          s"wau_rows=$userWauRowCount weekly_session_rows=$weeklyActiveSessionRowCount"
       )
       info(
         s"Hive smoke artifacts: final_output=$finalOutputPath warehouse=$warehouseDir metastore=$metastoreDir " +
-          s"registered_partitions=${registeredPartitions.size}"
+          s"registered_partitions=${registeredPartitions.size} wau_users=$wauUsersOutputPath weekly_active_sessions=$weeklyActiveSessionsOutputPath"
       )
     } finally {
       hiveSpark.stop()
@@ -368,16 +385,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
   }
 
   private def resolveHiveSampleSize(): Int =
-    sys.props
-      .get("hive.smoke.sample.limit")
-      .orElse(sys.env.get("HIVE_SMOKE_SAMPLE_LIMIT"))
-      .orElse(sys.props.get("smoke.sample.limit"))
-      .orElse(sys.env.get("SMOKE_SAMPLE_LIMIT"))
-      .map(_.trim)
-      .filter(_.nonEmpty)
-      .map(_.toInt)
-      .filter(_ > 0)
-      .getOrElse(1000)
+    resolveSampleSize()
 
   private def resolveHiveOutputPath(): Option[Path] =
     sys.props

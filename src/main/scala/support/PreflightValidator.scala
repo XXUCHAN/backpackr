@@ -11,6 +11,7 @@ object PreflightValidator {
   private val DateFormatter = DateTimeFormatter.ISO_LOCAL_DATE
 
   def validate(config: AppConfig): Unit = {
+    val shouldRegisterHivePartitions = config.registerHivePartitions || config.executeWau
     val startDate = parseDate(config.startDate, "start-date")
     val endDate = parseDate(config.endDate, "end-date")
     val todayKst = LocalDate.now(KstZoneId)
@@ -31,7 +32,7 @@ object PreflightValidator {
     val runLogPath = Paths.get(PathBuilder.batchRunLogPath(config.runLogBasePath, config.runId))
     require(!Files.exists(runLogPath), s"batch run log path for run_id already exists: $runLogPath")
 
-    if (config.registerHivePartitions) {
+    if (shouldRegisterHivePartitions) {
       require(
         Option(config.outputBasePath).exists(_.trim.nonEmpty),
         "output-base-path must be provided when register-hive-partitions is enabled"

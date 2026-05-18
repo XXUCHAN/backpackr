@@ -12,4 +12,7 @@ object PathBuilder {
 
   def batchRunLogPath(basePath: String, runId: String): String =
     s"$basePath/run_id=$runId/batch-run-log.json"
+
+  def wauRunPath(basePath: String, runId: String): String =
+    s"$basePath/run_id=$runId"
 }
