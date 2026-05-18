@@ -115,7 +115,8 @@ object ActivityBatchApp {
         )
 
         finalOutputPath.foreach { outputPath =>
-          ActivityWriter.writeToFinal(sessionizedValid, outputPath)
+          ActivityWriter.promoteToFinal(validOutputPath, outputPath, outputPartitions)
+          ActivityWriter.cleanupPath(validOutputPath)
           BatchRunLogger.logStatus(
             runLogBasePath = config.runLogBasePath,
             runId = config.runId,
@@ -126,7 +127,10 @@ object ActivityBatchApp {
             dlqPath = Some(dlqOutputPath),
             finalOutputPath = Some(outputPath),
             summary = Some(summary),
-            message = Some(s"unique_session_count=$uniqueSessionCount")
+            message =
+              Some(
+                s"unique_session_count=$uniqueSessionCount; promoted_partitions=${outputPartitions.mkString(",")}"
+              )
           )
         }
 

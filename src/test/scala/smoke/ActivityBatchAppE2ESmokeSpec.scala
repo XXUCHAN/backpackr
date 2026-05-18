@@ -254,6 +254,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
     val tableName = "activity_events_smoke"
     val persistentBaseDir = resolveHiveOutputPath()
     val tempBaseDir = persistentBaseDir.getOrElse(Files.createTempDirectory("activity-hive-e2e-smoke-"))
+    val stagingOutputPath = tempBaseDir.resolve("staging-valid").toString
     val finalOutputPath = tempBaseDir.resolve("final-output").toString
     val warehouseDir = tempBaseDir.resolve("warehouse")
     val metastoreDir = tempBaseDir.resolve("metastore_db")
@@ -286,13 +287,16 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
 
       assert(sessionizedCount > 0L)
 
-      ActivityWriter.writeToFinal(sessionized, finalOutputPath)
+      ActivityWriter.writeToStaging(sessionized, stagingOutputPath)
+      val promotedPaths = ActivityWriter.promoteToFinal(stagingOutputPath, finalOutputPath, outputPartitions)
+      ActivityWriter.cleanupPath(stagingOutputPath)
       SessionStateStore.saveSnapshot(sessionSnapshot, sessionSnapshotBasePath, "2019-10-01")
 
       HiveTableManager.createActivityEventsTable(hiveSpark, tableName, finalOutputPath)
       val registeredPartitions = HiveTableManager.addPartitions(hiveSpark, tableName, finalOutputPath, outputPartitions)
 
       assert(hiveSpark.catalog.tableExists(tableName))
+      assert(promotedPaths.size === outputPartitions.size)
       assert(registeredPartitions.size === outputPartitions.size)
 
       val tableDf = hiveSpark.table(tableName)
@@ -306,7 +310,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       info("Hive smoke status: SUCCESS")
       info(
         s"Hive smoke summary: sample=$sampleSize raw=$rawCount invalid=$invalidCount sessionized=$sessionizedCount " +
-          s"table=$tableName partitions=${outputPartitions.mkString(", ")}"
+          s"table=$tableName partitions=${outputPartitions.mkString(", ")} promoted=${promotedPaths.size}"
       )
       info(
         s"Hive smoke artifacts: final_output=$finalOutputPath warehouse=$warehouseDir metastore=$metastoreDir " +

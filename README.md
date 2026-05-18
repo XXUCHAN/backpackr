@@ -97,20 +97,19 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 - validation / DLQ 분리
 - exact deduplication
 - 기본 sessionization
-- 전일 상태 기반 `session_state_snapshot` 저장
+- 전일 상태 기반 `session_state_snapshot` 저장 및 이어붙이기
 - preflight validation
 - batch run log 파일 기록
 - quality gate
 - staging parquet write
-- optional final output write
+- staging -> final partition promote
 - Hive external table 생성 및 partition 등록
 
 아직 미구현 상태인 항목은 아래와 같다.
 
 - 다중 일자 backfill 기준 `session_state_snapshot` seed 재계산
-- Hive partition 등록
 - WAU 실제 집계 연결
-- 원자적 staging -> final promote 정식 흐름
+- promote 실패 후 재시도 자동화
 
 ## Operational Considerations
 
@@ -127,6 +126,10 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
   - 전체 `event_time` 파싱 실패 방지
   - `DLQ ratio > 1%` warning
   - `DLQ ratio > 5%` fail
+- `ActivityWriter`
+  - staging 경로에 먼저 parquet write
+  - 검증 통과 후 final partition 경로로 promote
+  - 기존 final partition이 있으면 교체
 - `batch-run-log`
   - `RUNNING`
   - `VALIDATED`
@@ -136,7 +139,7 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리해 KST 기준 partitioned pa
 - exact dedup
   - 진짜 중복만 제거하기 위해 `user_id`, `event_time_utc`, `event_type`, `product_id`, `category_id`, `category_code`, `brand`, `normalized_price`, `raw_user_session`이 모두 같은 경우만 제거
 
-즉 현재 구현은 단순 변환 배치가 아니라, 입력 오류를 조기에 차단하고 실행 상태와 품질 결과를 남기는 운영형 배치 골격까지 포함한다.
+즉 현재 구현은 단순 변환 배치가 아니라, 입력 오류를 조기에 차단하고 실행 상태와 품질 결과를 남기며 final publish를 staging과 분리한 운영형 배치 골격까지 포함한다.
 
 ## Prerequisites
 

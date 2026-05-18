@@ -69,4 +69,52 @@ class PreflightValidatorSpec extends AnyFunSuite {
 
     assert(error.getMessage.contains("end-date must not be in the future"))
   }
+
+  test("preflight validator should fail when staging path for the same run_id already exists") {
+    val baseDir = Files.createTempDirectory("preflight-existing-staging-")
+    val inputFile = Files.createTempFile(baseDir, "input", ".csv")
+    val stagingRunPath = baseDir.resolve("staging").resolve("run_id=run-1")
+    Files.createDirectories(stagingRunPath)
+
+    val config = AppConfig(
+      mode = BatchMode.Daily,
+      startDate = "2019-10-01",
+      endDate = "2019-10-31",
+      inputPath = inputFile.toString,
+      stagingBasePath = baseDir.resolve("staging").toString,
+      dlqBasePath = baseDir.resolve("dlq").toString,
+      runLogBasePath = baseDir.resolve("run-log").toString,
+      runId = "run-1"
+    )
+
+    val error = intercept[IllegalArgumentException] {
+      PreflightValidator.validate(config)
+    }
+
+    assert(error.getMessage.contains("staging path for run_id already exists"))
+  }
+
+  test("preflight validator should fail when Hive partition registration is enabled without output path") {
+    val baseDir = Files.createTempDirectory("preflight-missing-output-")
+    val inputFile = Files.createTempFile(baseDir, "input", ".csv")
+
+    val config = AppConfig(
+      mode = BatchMode.Daily,
+      startDate = "2019-10-01",
+      endDate = "2019-10-31",
+      inputPath = inputFile.toString,
+      stagingBasePath = baseDir.resolve("staging").toString,
+      dlqBasePath = baseDir.resolve("dlq").toString,
+      runLogBasePath = baseDir.resolve("run-log").toString,
+      registerHivePartitions = true,
+      outputBasePath = "",
+      runId = "run-1"
+    )
+
+    val error = intercept[IllegalArgumentException] {
+      PreflightValidator.validate(config)
+    }
+
+    assert(error.getMessage.contains("output-base-path must be provided"))
+  }
 }

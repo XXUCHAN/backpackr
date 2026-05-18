@@ -62,4 +62,25 @@ class QualityGateSpec extends AnyFunSuite {
 
     assert(error.getMessage.contains("output_row_count"))
   }
+
+  test("quality gate should fail when dlq ratio exceeds fail threshold") {
+    val summary = BatchExecutionSummary(
+      inputRowCount = 1000L,
+      validRowCount = 930L,
+      invalidRowCount = 70L,
+      outputRowCount = 920L,
+      duplicateGroupCount = 4L,
+      duplicateRowsCount = 12L,
+      droppedDuplicateRowsCount = 8L,
+      dlqRatio = 0.07d,
+      invalidReasonSummary = Map("INVALID_EVENT_TIME" -> 70L),
+      outputPartitions = Seq("2019-10-01")
+    )
+
+    val error = intercept[IllegalArgumentException] {
+      QualityGate.evaluate(summary)
+    }
+
+    assert(error.getMessage.contains("dlq_ratio"))
+  }
 }
