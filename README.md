@@ -110,12 +110,12 @@ sbt \
 기본값:
 
 - `mode = daily`
-- `staging-base-path = .tmp/staging`
-- `dlq-base-path = .tmp/dlq`
-- `session-state-base-path = .tmp/session-state`
-- `run-log-base-path = .tmp/batch-run-log`
-- `output-base-path = .tmp/final-output`
-- `wau-output-base-path = .tmp/wau-results`
+- `staging-base-path = output/staging`
+- `dlq-base-path = output/dlq`
+- `session-state-base-path = output/session-state`
+- `run-log-base-path = output/run-log`
+- `output-base-path = output/final-output`
+- `wau-output-base-path = output/wau-results`
 - `hive-table-name = activity_events`
 
 `--execute-wau`를 주면 Hive external table 생성, partition 등록, WAU 실행까지 함께 수행한다.
@@ -153,39 +153,53 @@ sbt \
 
 ## 주요 산출물
 
-- staging output: `.tmp/staging/run_id=<run_id>/valid/`
-- DLQ output: `.tmp/dlq/run_id=<run_id>/invalid/`
-- final output: `.tmp/final-output/event_date_kst=...`
-- session snapshot: `.tmp/session-state/snapshot_date_kst=<end-date>/`
-- batch run log: `.tmp/batch-run-log/run_id=<run_id>/batch-run-log.json`
+- staging output: `output/staging/run_id=<run_id>/valid/`
+- DLQ output: `output/dlq/run_id=<run_id>/invalid/`
+- final output: `output/final-output/event_date_kst=...`
+- session snapshot: `output/session-state/snapshot_date_kst=<end-date>/`
+- batch run log: `output/run-log/run_id=<run_id>/batch-run-log.json`
 - WAU output:
-  - `.tmp/wau-results/run_id=<run_id>/wau-users/`
-  - `.tmp/wau-results/run_id=<run_id>/weekly-active-sessions/`
+  - `output/wau-results/run_id=<run_id>/wau-users/`
+  - `output/wau-results/run_id=<run_id>/weekly-active-sessions/`
 
 ## 실제 검증 결과
 
-실데이터 `2019-10-01 ~ 2019-10-15` 실행 결과:
+실데이터 전체 기간 `2019-10-01 ~ 2019-11-30` 실행 결과:
 
-- `input_row_count = 42,448,764`
-- `validated_row_count = 19,962,845`
-- `sessionized_row_count = 19,950,269`
-- `unique_session_count = 4,369,219`
-- `duplicate_group_count = 7,430`
-- `dropped_duplicate_row_count = 12,576`
+- `input_row_count = 109,950,743`
+- `validated_row_count = 109,362,687`
+- `sessionized_row_count = 109,232,472`
+- `unique_session_count = 22,885,344`
+- `duplicate_group_count = 75,317`
+- `duplicate_rows_count = 205,532`
+- `dropped_duplicate_row_count = 130,215`
 - `invalid_row_count = 0`
-- output partitions: `2019-10-01 ~ 2019-10-15`
+- `registered_hive_partitions_count = 61`
+- output partitions: `2019-10-01 ~ 2019-11-30`
 
 WAU 결과:
 
 - `2019-09-30`: `818,388`
 - `2019-10-07`: `1,057,958`
-- `2019-10-14`: `393,290`
+- `2019-10-14`: `1,090,898`
+- `2019-10-21`: `1,093,146`
+- `2019-10-28`: `1,054,722`
+- `2019-11-04`: `1,321,141`
+- `2019-11-11`: `1,543,309`
+- `2019-11-18`: `1,376,755`
+- `2019-11-25`: `1,133,949`
 
 Weekly Active Sessions 결과:
 
 - `2019-09-30`: `1,570,536`
 - `2019-10-07`: `2,153,262`
-- `2019-10-14`: `645,421`
+- `2019-10-14`: `2,256,082`
+- `2019-10-21`: `2,152,730`
+- `2019-10-28`: `2,114,204`
+- `2019-11-04`: `2,750,735`
+- `2019-11-11`: `4,752,893`
+- `2019-11-18`: `2,870,609`
+- `2019-11-25`: `2,264,293`
 
 ## WAU 계산 쿼리
 
@@ -227,4 +241,4 @@ ORDER BY week_start_kst;
 
 ## 참고
 
-- 결과 상세 보고서: [docs/WAU_Result_Report.md](docs/WAU_Result_Report.md:1)
+- 제출용 요약: [docs/Submission_Summary.md](docs/Submission_Summary.md:1)
