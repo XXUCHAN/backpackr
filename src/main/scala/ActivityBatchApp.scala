@@ -11,6 +11,7 @@ import writer.{ActivityWriter, DlqWriter}
 
 import java.time.Instant
 import java.time.LocalDate
+import java.sql.Date
 
 object ActivityBatchApp {
   def main(args: Array[String]): Unit = {
@@ -124,7 +125,9 @@ object ActivityBatchApp {
           processingStartDate = Some(config.startDate),
           processingEndDate = Some(config.endDate),
           snapshotSeedDate = Some(previousSnapshotDate),
-          snapshotTargetDate = Some(config.endDate)
+          snapshotTargetDate = Some(config.endDate),
+          qualityGateWarnings = qualityGateResult.warnings,
+          uniqueSessionCount = Some(uniqueSessionCount)
         )
 
         finalOutputPath.foreach { outputPath =>
@@ -147,7 +150,9 @@ object ActivityBatchApp {
             processingStartDate = Some(config.startDate),
             processingEndDate = Some(config.endDate),
             snapshotSeedDate = Some(previousSnapshotDate),
-            snapshotTargetDate = Some(config.endDate)
+            snapshotTargetDate = Some(config.endDate),
+            qualityGateWarnings = qualityGateResult.warnings,
+            uniqueSessionCount = Some(uniqueSessionCount)
           )
         }
 
@@ -165,7 +170,7 @@ object ActivityBatchApp {
             Seq.empty[String]
         }
 
-        val wauSummaryMessage =
+        val wauSummary =
           if (config.executeWau) {
             val userWau = WauQueryExecutor.runUserWau(spark, config.hiveTableName)
             val weeklyActiveSessions = WauQueryExecutor.runWeeklyActiveSessions(spark, config.hiveTableName)
@@ -173,13 +178,39 @@ object ActivityBatchApp {
             WauQueryExecutor.writeResult(userWau, wauUsersOutputPath)
             WauQueryExecutor.writeResult(weeklyActiveSessions, weeklyActiveSessionsOutputPath)
 
+            val userWauRows = userWau.collect().toSeq
+            val weeklyActiveSessionRows = weeklyActiveSessions.collect().toSeq
+            val userWauWeekCount = userWauRows.size.toLong
+            val weeklyActiveSessionWeekCount = weeklyActiveSessionRows.size.toLong
+            val userWauMinWeek = userWauRows.headOption.map(row => row.getAs[Date]("week_start_kst").toString)
+            val userWauMaxWeek = userWauRows.lastOption.map(row => row.getAs[Date]("week_start_kst").toString)
+            val weeklyActiveSessionsMinWeek =
+              weeklyActiveSessionRows.headOption.map(row => row.getAs[Date]("week_start_kst").toString)
+            val weeklyActiveSessionsMaxWeek =
+              weeklyActiveSessionRows.lastOption.map(row => row.getAs[Date]("week_start_kst").toString)
+
             println("wau_users:")
             userWau.show(100, truncate = false)
             println("weekly_active_sessions:")
             weeklyActiveSessions.show(100, truncate = false)
+            println(
+              s"wau_summary=week_count=$userWauWeekCount min_week=${userWauMinWeek.getOrElse("n/a")} max_week=${userWauMaxWeek.getOrElse("n/a")}"
+            )
+            println(
+              s"weekly_active_sessions_summary=week_count=$weeklyActiveSessionWeekCount min_week=${weeklyActiveSessionsMinWeek.getOrElse("n/a")} max_week=${weeklyActiveSessionsMaxWeek.getOrElse("n/a")}"
+            )
 
             Some(
-              s"wau_users_output_path=$wauUsersOutputPath; weekly_active_sessions_output_path=$weeklyActiveSessionsOutputPath"
+              WauExecutionSummary(
+                wauUsersOutputPath = wauUsersOutputPath,
+                weeklyActiveSessionsOutputPath = weeklyActiveSessionsOutputPath,
+                wauUsersWeekCount = userWauWeekCount,
+                wauUsersMinWeek = userWauMinWeek,
+                wauUsersMaxWeek = userWauMaxWeek,
+                weeklyActiveSessionsWeekCount = weeklyActiveSessionWeekCount,
+                weeklyActiveSessionsMinWeek = weeklyActiveSessionsMinWeek,
+                weeklyActiveSessionsMaxWeek = weeklyActiveSessionsMaxWeek
+              )
             )
           } else {
             None
@@ -198,17 +229,27 @@ object ActivityBatchApp {
           message =
             if (qualityGateResult.warnings.nonEmpty) {
               Some(
-                s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath; registered_hive_partitions=${registeredHivePartitions.size}${wauSummaryMessage.map(value => s"; $value").getOrElse("")}"
+                s"${qualityGateResult.warnings.mkString("; ")}; unique_session_count=$uniqueSessionCount"
               )
             } else {
-              Some(
-                s"unique_session_count=$uniqueSessionCount; session_snapshot_path=$sessionSnapshotPath; registered_hive_partitions=${registeredHivePartitions.size}${wauSummaryMessage.map(value => s"; $value").getOrElse("")}"
-              )
+              Some(s"unique_session_count=$uniqueSessionCount")
             },
           processingStartDate = Some(config.startDate),
           processingEndDate = Some(config.endDate),
           snapshotSeedDate = Some(previousSnapshotDate),
-          snapshotTargetDate = Some(config.endDate)
+          snapshotTargetDate = Some(config.endDate),
+          qualityGateWarnings = qualityGateResult.warnings,
+          uniqueSessionCount = Some(uniqueSessionCount),
+          registeredHivePartitionsCount = Some(registeredHivePartitions.size),
+          sessionSnapshotPath = Some(sessionSnapshotPath),
+          wauUsersOutputPath = wauSummary.map(_.wauUsersOutputPath),
+          weeklyActiveSessionsOutputPath = wauSummary.map(_.weeklyActiveSessionsOutputPath),
+          wauUsersWeekCount = wauSummary.map(_.wauUsersWeekCount),
+          wauUsersMinWeek = wauSummary.flatMap(_.wauUsersMinWeek),
+          wauUsersMaxWeek = wauSummary.flatMap(_.wauUsersMaxWeek),
+          weeklyActiveSessionsWeekCount = wauSummary.map(_.weeklyActiveSessionsWeekCount),
+          weeklyActiveSessionsMinWeek = wauSummary.flatMap(_.weeklyActiveSessionsMinWeek),
+          weeklyActiveSessionsMaxWeek = wauSummary.flatMap(_.weeklyActiveSessionsMaxWeek)
         )
 
         println(s"mode=${config.mode.entryName}")
@@ -269,4 +310,15 @@ object ActivityBatchApp {
         throw error
     }
   }
+
+  private final case class WauExecutionSummary(
+      wauUsersOutputPath: String,
+      weeklyActiveSessionsOutputPath: String,
+      wauUsersWeekCount: Long,
+      wauUsersMinWeek: Option[String],
+      wauUsersMaxWeek: Option[String],
+      weeklyActiveSessionsWeekCount: Long,
+      weeklyActiveSessionsMinWeek: Option[String],
+      weeklyActiveSessionsMaxWeek: Option[String]
+  )
 }

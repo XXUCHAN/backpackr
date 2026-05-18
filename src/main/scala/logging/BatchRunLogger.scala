@@ -25,7 +25,19 @@ object BatchRunLogger {
       processingStartDate: Option[String] = None,
       processingEndDate: Option[String] = None,
       snapshotSeedDate: Option[String] = None,
-      snapshotTargetDate: Option[String] = None
+      snapshotTargetDate: Option[String] = None,
+      qualityGateWarnings: Seq[String] = Seq.empty,
+      uniqueSessionCount: Option[Long] = None,
+      registeredHivePartitionsCount: Option[Int] = None,
+      sessionSnapshotPath: Option[String] = None,
+      wauUsersOutputPath: Option[String] = None,
+      weeklyActiveSessionsOutputPath: Option[String] = None,
+      wauUsersWeekCount: Option[Long] = None,
+      wauUsersMinWeek: Option[String] = None,
+      wauUsersMaxWeek: Option[String] = None,
+      weeklyActiveSessionsWeekCount: Option[Long] = None,
+      weeklyActiveSessionsMinWeek: Option[String] = None,
+      weeklyActiveSessionsMaxWeek: Option[String] = None
   ): Unit = {
     val logPath = Paths.get(PathBuilder.batchRunLogPath(runLogBasePath, runId))
     Option(logPath.getParent).foreach(parent => Files.createDirectories(parent))
@@ -45,6 +57,23 @@ object BatchRunLogger {
     processingEndDate.foreach(value => payload.put("processing_end_date", value))
     snapshotSeedDate.foreach(value => payload.put("snapshot_seed_date", value))
     snapshotTargetDate.foreach(value => payload.put("snapshot_target_date", value))
+    uniqueSessionCount.foreach(value => payload.put("unique_session_count", value))
+    registeredHivePartitionsCount.foreach(value => payload.put("registered_hive_partitions_count", value))
+    sessionSnapshotPath.foreach(value => payload.put("session_snapshot_path", value))
+    wauUsersOutputPath.foreach(value => payload.put("wau_users_output_path", value))
+    weeklyActiveSessionsOutputPath.foreach(value => payload.put("weekly_active_sessions_output_path", value))
+    wauUsersWeekCount.foreach(value => payload.put("wau_users_week_count", value))
+    wauUsersMinWeek.foreach(value => payload.put("wau_users_min_week", value))
+    wauUsersMaxWeek.foreach(value => payload.put("wau_users_max_week", value))
+    weeklyActiveSessionsWeekCount.foreach(value => payload.put("weekly_active_sessions_week_count", value))
+    weeklyActiveSessionsMinWeek.foreach(value => payload.put("weekly_active_sessions_min_week", value))
+    weeklyActiveSessionsMaxWeek.foreach(value => payload.put("weekly_active_sessions_max_week", value))
+
+    if (qualityGateWarnings.nonEmpty) {
+      val warnings = objectMapper.createArrayNode()
+      qualityGateWarnings.foreach(warnings.add)
+      payload.replace("quality_gate_warnings", warnings)
+    }
 
     summary.foreach { metrics =>
       payload.put("input_row_count", metrics.inputRowCount)

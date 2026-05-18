@@ -166,9 +166,10 @@ sbt \
   - `output_row_count > 0`
   - `DLQ ratio > 1%` warning
   - `DLQ ratio > 5%` fail
-- `ActivityWriter`
-  - final 경로 직접 write 금지
-  - staging에 먼저 write 후 검증 통과 시 partition promote
+- `ActivityWriter` (원자적 배포 및 장애 복구)
+  - Final 경로 직접 쓰기 방지 및 Staging 우선 쓰기 적용
+  - 배포(Promote) 과정 중 에러 발생 시 기존 데이터 보존을 위한 원상 복구(Rollback) 기능
+  - 대기실(Work 폴더) 복사 기반의 안전한 원자적 이동(Atomic Move) 및 자동 재시도(Retry) 메커니즘 구현
 - `BatchRunLogger`
   - 상태 이력을 append 방식의 JSON 배열로 기록
 - `SessionStateStore`
@@ -179,5 +180,3 @@ sbt \
 **1. 지연 도착 데이터 (Late Arrival Data) 병합**
 현재는 파라미터로 입력받은 일자 범위(start-date ~ end-date) 외의 과거 이벤트가 유입될 경우 제외됩니다. 실무 환경에서는 이를 버리지 않고 기존 파티션에 안전하게 끼워 넣는(Merge/Upsert) 로직이 추가로 고려되어야 합니다.
 
-**2. 원자적 배포 (Promote) 실패 복구**
-Staging 경로에서 Final 파티션으로 데이터를 Promote 하는 과정에서 시스템 에러가 발생할 경우를 대비한 롤백(Rollback) 및 자동 재시도 메커니즘 보강이 필요합니다.
