@@ -91,7 +91,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       val duplicateGroupCount =
         if (duplicateRowsCount > 0L) duplicates.select("dedup_key").distinct().count() else 0L
       val uniqueSessionCount = sessionized.select("session_id").distinct().count()
-      val invalidReasonSummary =
+      val invalidReasonSummaryText =
         if (invalidCount > 0L) {
           validationResult.invalid
             .groupBy("reject_reason")
@@ -180,7 +180,11 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
         startedAt = startedAt,
         stagingPath = Some(validOutputPath),
         dlqPath = Some(duplicateOutputPath),
-        summary = Some(summary),
+        inputRowCount = Some(rawCount),
+        validRowCount = Some(validCount),
+        invalidRowCount = Some(invalidCount),
+        dlqRatio = Some(summary.dlqRatio),
+        invalidReasonSummary = summary.invalidReasonSummary,
         message = if (qualityGateResult.warnings.nonEmpty) Some(qualityGateResult.warnings.mkString("; ")) else None
       )
 
@@ -204,7 +208,18 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
         startedAt = startedAt,
         stagingPath = Some(validOutputPath),
         dlqPath = Some(duplicateOutputPath),
-        summary = Some(summary),
+        inputRowCount = Some(rawCount),
+        validRowCount = Some(validCount),
+        invalidRowCount = Some(invalidCount),
+        outputRowCount = Some(sessionizedCount),
+        duplicateGroupCount = Some(duplicateGroupCount),
+        duplicateRowsCount = Some(duplicateRowsCount),
+        droppedDuplicateRowsCount = Some(droppedDuplicateCount),
+        dlqRatio = Some(summary.dlqRatio),
+        invalidReasonSummary = summary.invalidReasonSummary,
+        outputPartitionCount = Some(outputPartitions.size),
+        outputPartitionStart = outputPartitions.headOption,
+        outputPartitionEnd = outputPartitions.lastOption,
         message = if (qualityGateResult.warnings.nonEmpty) Some(qualityGateResult.warnings.mkString("; ")) else None
       )
       assert(Files.exists(Paths.get(batchRunLogPath)))
@@ -221,7 +236,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
           s"duplicate_json=${if (duplicateRowsCount > 0L) duplicateGroupJsonOutputPath else "(not generated)"}"
       )
       if (invalidCount > 0L) {
-        info(s"Smoke invalid reason summary: $invalidReasonSummary")
+        info(s"Smoke invalid reason summary: $invalidReasonSummaryText")
       }
     } catch {
       case error: Throwable =>

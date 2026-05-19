@@ -2,7 +2,7 @@ package logging
 
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.node.ArrayNode
-import model.{BatchExecutionSummary, BatchRunStatus}
+import model.BatchRunStatus
 import support.PathBuilder
 
 import java.nio.file.{Files, Paths}
@@ -21,12 +21,24 @@ object BatchRunLogger {
       stagingPath: Option[String] = None,
       dlqPath: Option[String] = None,
       finalOutputPath: Option[String] = None,
-      summary: Option[BatchExecutionSummary] = None,
       processingStartDate: Option[String] = None,
       processingEndDate: Option[String] = None,
       snapshotSeedDate: Option[String] = None,
       snapshotTargetDate: Option[String] = None,
       qualityGateWarnings: Seq[String] = Seq.empty,
+      phaseDurationMs: Option[Long] = None,
+      inputRowCount: Option[Long] = None,
+      validRowCount: Option[Long] = None,
+      invalidRowCount: Option[Long] = None,
+      outputRowCount: Option[Long] = None,
+      duplicateGroupCount: Option[Long] = None,
+      duplicateRowsCount: Option[Long] = None,
+      droppedDuplicateRowsCount: Option[Long] = None,
+      dlqRatio: Option[Double] = None,
+      invalidReasonSummary: Map[String, Long] = Map.empty,
+      outputPartitionCount: Option[Int] = None,
+      outputPartitionStart: Option[String] = None,
+      outputPartitionEnd: Option[String] = None,
       uniqueSessionCount: Option[Long] = None,
       registeredHivePartitionsCount: Option[Int] = None,
       sessionSnapshotPath: Option[String] = None,
@@ -57,6 +69,18 @@ object BatchRunLogger {
     processingEndDate.foreach(value => payload.put("processing_end_date", value))
     snapshotSeedDate.foreach(value => payload.put("snapshot_seed_date", value))
     snapshotTargetDate.foreach(value => payload.put("snapshot_target_date", value))
+    phaseDurationMs.foreach(value => payload.put("phase_duration_ms", value))
+    inputRowCount.foreach(value => payload.put("input_row_count", value))
+    validRowCount.foreach(value => payload.put("valid_row_count", value))
+    invalidRowCount.foreach(value => payload.put("invalid_row_count", value))
+    outputRowCount.foreach(value => payload.put("output_row_count", value))
+    duplicateGroupCount.foreach(value => payload.put("duplicate_group_count", value))
+    duplicateRowsCount.foreach(value => payload.put("duplicate_rows_count", value))
+    droppedDuplicateRowsCount.foreach(value => payload.put("dropped_duplicate_rows_count", value))
+    dlqRatio.foreach(value => payload.put("dlq_ratio", value))
+    outputPartitionCount.foreach(value => payload.put("output_partition_count", value))
+    outputPartitionStart.foreach(value => payload.put("output_partition_start", value))
+    outputPartitionEnd.foreach(value => payload.put("output_partition_end", value))
     uniqueSessionCount.foreach(value => payload.put("unique_session_count", value))
     registeredHivePartitionsCount.foreach(value => payload.put("registered_hive_partitions_count", value))
     sessionSnapshotPath.foreach(value => payload.put("session_snapshot_path", value))
@@ -75,22 +99,9 @@ object BatchRunLogger {
       payload.replace("quality_gate_warnings", warnings)
     }
 
-    summary.foreach { metrics =>
-      payload.put("input_row_count", metrics.inputRowCount)
-      payload.put("valid_row_count", metrics.validRowCount)
-      payload.put("invalid_row_count", metrics.invalidRowCount)
-      payload.put("output_row_count", metrics.outputRowCount)
-      payload.put("duplicate_group_count", metrics.duplicateGroupCount)
-      payload.put("duplicate_rows_count", metrics.duplicateRowsCount)
-      payload.put("dropped_duplicate_rows_count", metrics.droppedDuplicateRowsCount)
-      payload.put("dlq_ratio", metrics.dlqRatio)
-
-      val outputPartitions = objectMapper.createArrayNode()
-      metrics.outputPartitions.foreach(outputPartitions.add)
-      payload.replace("output_partitions", outputPartitions)
-
+    if (invalidReasonSummary.nonEmpty) {
       val invalidReasons = objectMapper.createObjectNode()
-      metrics.invalidReasonSummary.toSeq.sortBy(_._1).foreach { case (reason, count) =>
+      invalidReasonSummary.toSeq.sortBy(_._1).foreach { case (reason, count) =>
         invalidReasons.put(reason, count)
       }
       payload.replace("invalid_reason_summary", invalidReasons)
