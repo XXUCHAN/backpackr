@@ -1,0 +1,17 @@
+services:
+  spark-etl:
+    image: sbtscala/scala-sbt:eclipse-temurin-jammy-17.0.10_7_1.10.0_2.12.19
+    container_name: spark-etl-job
+    working_dir: /workspace
+    volumes:
+      - .:/workspace
+      - sbt-cache:/root/.sbt
+      - coursier-cache:/root/.cache/coursier
+      - ivy2-cache:/root/.ivy2
+    environment:
+      - JAVA_OPTS=-Xmx8G
+
+volumes:
+  sbt-cache:
+  coursier-cache:
+  ivy2-cache:

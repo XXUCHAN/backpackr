@@ -89,6 +89,10 @@ export PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH
 
 (또는 프로젝트 루트에서 로컬 sbt 래퍼 스크립트를 다운로드하여 `sbt` 대신 `./sbt` 명령어를 사용할 수도 있습니다.)
 
+### 🔹 Docker (초간편 실행 - 권장)
+Java나 SBT 설치 과정 없이 Docker만 있다면 곧바로 실행 가능합니다.
+* **설치:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치
+
 ## 실행 방법
 
 기본 경로는 코드에 설정되어 있으므로 필수 파라미터만 주면 된다.
@@ -97,42 +101,42 @@ export PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH
 
 `.data` 아래의 `2019-Oct.csv`, `2019-Nov.csv`를 함께 읽어 전체 기간을 처리하는 기본 예시다.
 
-**Mac 환경 (글로벌 sbt)**
+**Docker Compose 환경 (권장)**
 ```bash
+docker compose run spark-etl sbt "run --start-date 2019-10-01 \
+  --end-date 2019-11-30 \
+  --input-path .data \
+  --run-id full_dataset_run \
+  --execute-wau"
+```
+
+**로컬 환경 (SBT가 설치된 경우)**
+```bash
+# 로컬 sbt 래퍼를 사용할 경우 sbt 대신 ./sbt 사용
 sbt "run --start-date 2019-10-01 \
   --end-date 2019-11-30 \
   --input-path .data \
   --run-id full_dataset_run \
   --execute-wau"
 ```
-
-**Ubuntu/Linux 환경 (로컬 래퍼 스크립트)**
-```bash
-./sbt "run --start-date 2019-10-01 \
-  --end-date 2019-11-30 \
-  --input-path .data \
-  --run-id full_dataset_run \
-  --execute-wau"
-```
-
 ### 2. 특정 기간만 부분 실행
 
 검증이나 재처리를 위해 특정 날짜 범위만 실행할 수도 있다.
 
 예: `2019-10-01 ~ 2019-10-15`
 
-**Mac 환경 (글로벌 sbt)**
+**Docker Compose 환경 (권장)**
 ```bash
-sbt "run --start-date 2019-10-01 \
+docker compose run spark-etl sbt "run --start-date 2019-10-01 \
   --end-date 2019-10-15 \
   --input-path .data/2019-Oct.csv \
   --run-id oct_1_15_run \
   --execute-wau"
 ```
 
-**Ubuntu/Linux 환경 (로컬 래퍼 스크립트)**
+**로컬 환경 (SBT가 설치된 경우)**
 ```bash
-./sbt "run --start-date 2019-10-01 \
+sbt "run --start-date 2019-10-01 \
   --end-date 2019-10-15 \
   --input-path .data/2019-Oct.csv \
   --run-id oct_1_15_run \
@@ -156,32 +160,33 @@ sbt "run --start-date 2019-10-01 \
 
 전체 테스트:
 
-**Mac 환경:**
+**Docker Compose 환경 (권장):**
+```bash
+docker compose run spark-etl sbt test
+```
+
+**로컬 환경:**
 ```bash
 sbt test
 ```
 
-**Ubuntu/Linux 환경:**
-```bash
-./sbt test
-```
-
 실데이터 스모크:
 
-**Mac 환경:**
+**Docker Compose 환경 (권장):**
+```bash
+docker compose run \
+  -e SMOKE_SAMPLE_LIMIT=100000 \
+  -e SMOKE_OUTPUT_PATH="output/smoke-output/oct-limit-100000" \
+  -e HIVE_SMOKE_OUTPUT_PATH="output/smoke-output/hive-oct-limit-100000" \
+  spark-etl sbt "testOnly smoke.ActivityBatchAppE2ESmokeSpec"
+```
+
+**로컬 환경:**
 ```bash
 SMOKE_SAMPLE_LIMIT=100000 \
 SMOKE_OUTPUT_PATH="output/smoke-output/oct-limit-100000" \
 HIVE_SMOKE_OUTPUT_PATH="output/smoke-output/hive-oct-limit-100000" \
 sbt "testOnly smoke.ActivityBatchAppE2ESmokeSpec"
-```
-
-**Ubuntu/Linux 환경:**
-```bash
-SMOKE_SAMPLE_LIMIT=100000 \
-SMOKE_OUTPUT_PATH="output/smoke-output/oct-limit-100000" \
-HIVE_SMOKE_OUTPUT_PATH="output/smoke-output/hive-oct-limit-100000" \
-./sbt "testOnly smoke.ActivityBatchAppE2ESmokeSpec"
 ```
 
 ## 주요 산출물
