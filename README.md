@@ -12,11 +12,17 @@ flowchart TD
         R2[(2019-Nov.csv)]
     end
 
+    %% Operations
+    subgraph Ops [Operations & Logging]
+        Preflight{Preflight<br>Validation}
+        Logger[(Batch Run Log)]
+    end
+
     %% Processing Layer
     subgraph Spark ETL Pipeline
         Read[CsvReader]
         Norm[Normalizer<br>UTC to KST]
-        Val[Validator<br>Quality Check]
+        Val[Validator<br>Quality Gate]
         Dedup[Deduplicator]
         Sess[Sessionizer<br>5min Inactivity]
 
@@ -38,23 +44,33 @@ flowchart TD
     end
 
     %% Flow Connections
-    R1 & R2 -->|Load| Read
+    R1 & R2 --> Preflight
+    Preflight -->|Pass| Read
+    Preflight -.->|Fail| Logger
+    
     Val -->|Reject| DLQ
     Sess -->|Save State| Snap
     Snap -.->|Load Previous State| Sess
     Sess -->|Write Valid| Stage
-    Stage -->|Atomic Promote<br>Quality Gate| Final
+    Stage -->|Atomic Promote<br>Rollback/Retry| Final
 
     Final -->|Register Partitions| Hive
     Hive -->|Execute Query| WAU
+    
+    Final -.->|Log Status| Logger
+    WAU -.->|Log Status| Logger
 
     %% Style
-    classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px;
-    classDef primary fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
-    classDef error fill:#ffebee,stroke:#f44336,stroke-width:2px;
+    classDef default fill:#ffffff,stroke:#333,stroke-width:1px,color:#333;
+    classDef primary fill:#2196f3,stroke:#1565c0,stroke-width:2px,color:#fff;
+    classDef error fill:#f44336,stroke:#c62828,stroke-width:2px,color:#fff;
+    classDef ops fill:#ff9800,stroke:#e65100,stroke-width:2px,color:#fff;
+    classDef spark fill:#4caf50,stroke:#2e7d32,stroke-width:2px,color:#fff;
 
+    class Read,Norm,Val,Dedup,Sess spark;
     class Final,Hive,WAU primary;
     class DLQ error;
+    class Preflight,Logger ops;
 ```
 
 현재 구현 범위:
