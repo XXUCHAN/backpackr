@@ -10,6 +10,12 @@ services:
       - ivy2-cache:/root/.ivy2
     environment:
       - JAVA_OPTS=-Xmx8G
+    command: >
+      sbt "run --start-date 2019-10-01
+        --end-date 2019-11-30
+        --input-path .data
+        --run-id full_dataset_run
+        --execute-wau"
 
 volumes:
   sbt-cache:
