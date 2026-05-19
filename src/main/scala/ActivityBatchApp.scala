@@ -43,6 +43,7 @@ object ActivityBatchApp {
         snapshotSeedDate = Some(previousSnapshotDate),
         snapshotTargetDate = Some(config.endDate)
       )
+      println(s"batch_status=${BatchRunStatus.Running.entryName}")
 
       val spark = SparkSessionFactory.create(config.appName)
 
@@ -110,6 +111,24 @@ object ActivityBatchApp {
           runLogBasePath = config.runLogBasePath,
           runId = config.runId,
           targetDate = targetDate,
+          status = BatchRunStatus.Normalized,
+          startedAt = startedAt,
+          stagingPath = Some(validOutputPath),
+          dlqPath = Some(dlqOutputPath),
+          finalOutputPath = finalOutputPath,
+          summary = Some(summary),
+          message = Some(s"input_row_count=$inputCount"),
+          processingStartDate = Some(config.startDate),
+          processingEndDate = Some(config.endDate),
+          snapshotSeedDate = Some(previousSnapshotDate),
+          snapshotTargetDate = Some(config.endDate)
+        )
+        println(s"batch_status=${BatchRunStatus.Normalized.entryName}")
+
+        BatchRunLogger.logStatus(
+          runLogBasePath = config.runLogBasePath,
+          runId = config.runId,
+          targetDate = targetDate,
           status = BatchRunStatus.Validated,
           startedAt = startedAt,
           stagingPath = Some(validOutputPath),
@@ -129,6 +148,50 @@ object ActivityBatchApp {
           qualityGateWarnings = qualityGateResult.warnings,
           uniqueSessionCount = Some(uniqueSessionCount)
         )
+        println(s"batch_status=${BatchRunStatus.Validated.entryName}")
+
+        BatchRunLogger.logStatus(
+          runLogBasePath = config.runLogBasePath,
+          runId = config.runId,
+          targetDate = targetDate,
+          status = BatchRunStatus.Deduplicated,
+          startedAt = startedAt,
+          stagingPath = Some(validOutputPath),
+          dlqPath = Some(dlqOutputPath),
+          finalOutputPath = finalOutputPath,
+          summary = Some(summary),
+          message =
+            Some(
+              s"output_row_count=$sessionizedCount; duplicate_group_count=$duplicateGroupCount; dropped_duplicate_rows_count=$droppedDuplicateRowsCount"
+            ),
+          processingStartDate = Some(config.startDate),
+          processingEndDate = Some(config.endDate),
+          snapshotSeedDate = Some(previousSnapshotDate),
+          snapshotTargetDate = Some(config.endDate)
+        )
+        println(s"batch_status=${BatchRunStatus.Deduplicated.entryName}")
+
+        BatchRunLogger.logStatus(
+          runLogBasePath = config.runLogBasePath,
+          runId = config.runId,
+          targetDate = targetDate,
+          status = BatchRunStatus.Sessionized,
+          startedAt = startedAt,
+          stagingPath = Some(validOutputPath),
+          dlqPath = Some(dlqOutputPath),
+          finalOutputPath = finalOutputPath,
+          summary = Some(summary),
+          message =
+            Some(
+              s"unique_session_count=$uniqueSessionCount; snapshot_seed_date=$previousSnapshotDate; snapshot_target_date=${config.endDate}"
+            ),
+          processingStartDate = Some(config.startDate),
+          processingEndDate = Some(config.endDate),
+          snapshotSeedDate = Some(previousSnapshotDate),
+          snapshotTargetDate = Some(config.endDate),
+          uniqueSessionCount = Some(uniqueSessionCount)
+        )
+        println(s"batch_status=${BatchRunStatus.Sessionized.entryName}")
 
         finalOutputPath.foreach { outputPath =>
           ActivityWriter.promoteToFinal(validOutputPath, outputPath, outputPartitions)
@@ -154,6 +217,7 @@ object ActivityBatchApp {
             qualityGateWarnings = qualityGateResult.warnings,
             uniqueSessionCount = Some(uniqueSessionCount)
           )
+          println(s"batch_status=${BatchRunStatus.Promoted.entryName}")
         }
 
         val snapshotTargetDate = config.endDate
@@ -168,6 +232,28 @@ object ActivityBatchApp {
             HiveTableManager.addPartitions(spark, config.hiveTableName, outputPath, outputPartitions)
           case _ =>
             Seq.empty[String]
+        }
+
+        if (registeredHivePartitions.nonEmpty) {
+          BatchRunLogger.logStatus(
+            runLogBasePath = config.runLogBasePath,
+            runId = config.runId,
+            targetDate = targetDate,
+            status = BatchRunStatus.HiveRegistered,
+            startedAt = startedAt,
+            stagingPath = Some(validOutputPath),
+            dlqPath = Some(dlqOutputPath),
+            finalOutputPath = finalOutputPath,
+            summary = Some(summary),
+            message = Some(s"registered_hive_partitions_count=${registeredHivePartitions.size}"),
+            processingStartDate = Some(config.startDate),
+            processingEndDate = Some(config.endDate),
+            snapshotSeedDate = Some(previousSnapshotDate),
+            snapshotTargetDate = Some(config.endDate),
+            uniqueSessionCount = Some(uniqueSessionCount),
+            registeredHivePartitionsCount = Some(registeredHivePartitions.size)
+          )
+          println(s"batch_status=${BatchRunStatus.HiveRegistered.entryName}")
         }
 
         val wauSummary =
@@ -216,6 +302,40 @@ object ActivityBatchApp {
             None
           }
 
+        wauSummary.foreach { summaryMetrics =>
+          BatchRunLogger.logStatus(
+            runLogBasePath = config.runLogBasePath,
+            runId = config.runId,
+            targetDate = targetDate,
+            status = BatchRunStatus.WauCompleted,
+            startedAt = startedAt,
+            stagingPath = Some(validOutputPath),
+            dlqPath = Some(dlqOutputPath),
+            finalOutputPath = finalOutputPath,
+            summary = Some(summary),
+            message =
+              Some(
+                s"wau_users_week_count=${summaryMetrics.wauUsersWeekCount}; weekly_active_sessions_week_count=${summaryMetrics.weeklyActiveSessionsWeekCount}"
+              ),
+            processingStartDate = Some(config.startDate),
+            processingEndDate = Some(config.endDate),
+            snapshotSeedDate = Some(previousSnapshotDate),
+            snapshotTargetDate = Some(config.endDate),
+            uniqueSessionCount = Some(uniqueSessionCount),
+            registeredHivePartitionsCount = Some(registeredHivePartitions.size),
+            sessionSnapshotPath = Some(sessionSnapshotPath),
+            wauUsersOutputPath = Some(summaryMetrics.wauUsersOutputPath),
+            weeklyActiveSessionsOutputPath = Some(summaryMetrics.weeklyActiveSessionsOutputPath),
+            wauUsersWeekCount = Some(summaryMetrics.wauUsersWeekCount),
+            wauUsersStartWeek = summaryMetrics.wauUsersStartWeek,
+            wauUsersEndWeek = summaryMetrics.wauUsersEndWeek,
+            weeklyActiveSessionsWeekCount = Some(summaryMetrics.weeklyActiveSessionsWeekCount),
+            weeklyActiveSessionsStartWeek = summaryMetrics.weeklyActiveSessionsStartWeek,
+            weeklyActiveSessionsEndWeek = summaryMetrics.weeklyActiveSessionsEndWeek
+          )
+          println(s"batch_status=${BatchRunStatus.WauCompleted.entryName}")
+        }
+
         BatchRunLogger.logStatus(
           runLogBasePath = config.runLogBasePath,
           runId = config.runId,
@@ -251,6 +371,7 @@ object ActivityBatchApp {
           weeklyActiveSessionsStartWeek = wauSummary.flatMap(_.weeklyActiveSessionsStartWeek),
           weeklyActiveSessionsEndWeek = wauSummary.flatMap(_.weeklyActiveSessionsEndWeek)
         )
+        println(s"batch_status=${BatchRunStatus.Success.entryName}")
 
         println(s"mode=${config.mode.entryName}")
         println(s"run_id=${config.runId}")
@@ -307,6 +428,7 @@ object ActivityBatchApp {
           snapshotSeedDate = Some(previousSnapshotDate),
           snapshotTargetDate = Some(config.endDate)
         )
+        println(s"batch_status=${BatchRunStatus.Failed.entryName}")
         throw error
     }
   }

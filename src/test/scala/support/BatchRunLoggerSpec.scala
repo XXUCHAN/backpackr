@@ -61,11 +61,11 @@ class BatchRunLoggerSpec extends AnyFunSuite {
       wauUsersOutputPath = Some("/tmp/wau-users"),
       weeklyActiveSessionsOutputPath = Some("/tmp/weekly-active-sessions"),
       wauUsersWeekCount = Some(3L),
-      wauUsersMinWeek = Some("2019-09-30"),
-      wauUsersMaxWeek = Some("2019-10-14"),
+      wauUsersStartWeek = Some("2019-09-30"),
+      wauUsersEndWeek = Some("2019-10-14"),
       weeklyActiveSessionsWeekCount = Some(3L),
-      weeklyActiveSessionsMinWeek = Some("2019-09-30"),
-      weeklyActiveSessionsMaxWeek = Some("2019-10-14")
+      weeklyActiveSessionsStartWeek = Some("2019-09-30"),
+      weeklyActiveSessionsEndWeek = Some("2019-10-14")
     )
 
     val logPath = baseDir.resolve("run_id=run-1").resolve("batch-run-log.json")
@@ -89,11 +89,11 @@ class BatchRunLoggerSpec extends AnyFunSuite {
     assert(root.get(1).get("wau_users_output_path").asText() === "/tmp/wau-users")
     assert(root.get(1).get("weekly_active_sessions_output_path").asText() === "/tmp/weekly-active-sessions")
     assert(root.get(1).get("wau_users_week_count").asLong() === 3L)
-    assert(root.get(1).get("wau_users_min_week").asText() === "2019-09-30")
-    assert(root.get(1).get("wau_users_max_week").asText() === "2019-10-14")
+    assert(root.get(1).get("wau_users_start_week").asText() === "2019-09-30")
+    assert(root.get(1).get("wau_users_end_week").asText() === "2019-10-14")
     assert(root.get(1).get("weekly_active_sessions_week_count").asLong() === 3L)
-    assert(root.get(1).get("weekly_active_sessions_min_week").asText() === "2019-09-30")
-    assert(root.get(1).get("weekly_active_sessions_max_week").asText() === "2019-10-14")
+    assert(root.get(1).get("weekly_active_sessions_start_week").asText() === "2019-09-30")
+    assert(root.get(1).get("weekly_active_sessions_end_week").asText() === "2019-10-14")
     assert(root.get(1).get("output_row_count").asLong() === 97L)
     assert(root.get(1).get("invalid_reason_summary").get("NULL_USER_ID").asLong() === 2L)
   }
