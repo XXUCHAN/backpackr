@@ -63,6 +63,32 @@ export PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH
 
 원본: [Kaggle Ecommerce Behavior Data from Multi Category Store](https://www.kaggle.com/mkechinov/ecommerce-behavior-data-from-multi-category-store)
 
+## 0. 사전 준비 (Prerequisites)
+
+본 프로젝트는 Scala 2.12와 Spark 3.x 기반으로 작성되었으므로 **JDK 11 이상** (권장: JDK 17)과 **SBT(Scala Build Tool)** 가 설치되어 있어야 합니다.
+
+### 🔹 Java (JDK) 설치 및 경로 설정
+* **Mac (Homebrew):** `brew install openjdk@17`
+  - 실행 전 터미널에 환경 변수를 등록하세요: `export JAVA_HOME=$(/usr/libexec/java_home -v 17)`
+* **Ubuntu / Debian:** `sudo apt-get install openjdk-17-jdk`
+  - 실행 전 터미널에 환경 변수를 등록하세요: `export JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64`
+
+### 🔹 SBT 설치
+* **Mac (Homebrew):** `brew install sbt`
+* **Ubuntu / Debian:**
+  ```bash
+  sudo apt-get update
+  sudo apt-get install apt-transport-https curl gnupg -yqq
+  echo "deb https://repo.scala-sbt.org/scalasbt/debian all main" | sudo tee /etc/apt/sources.list.d/sbt.list
+  echo "deb https://repo.scala-sbt.org/scalasbt/debian /" | sudo tee /etc/apt/sources.list.d/sbt_old.list
+  curl -sL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x2EE0EA64E40A89B84B2DF73499E82A75642AC823" | sudo -H gpg --no-default-keyring --keyring gnupg-ring:/etc/apt/trusted.gpg.d/scalasbt-release.gpg --import
+  sudo chmod 644 /etc/apt/trusted.gpg.d/scalasbt-release.gpg
+  sudo apt-get update
+  sudo apt-get install sbt
+  ```
+
+(또는 프로젝트 루트에서 로컬 sbt 래퍼 스크립트를 다운로드하여 `sbt` 대신 `./sbt` 명령어를 사용할 수도 있습니다.)
+
 ## 실행 방법
 
 기본 경로는 코드에 설정되어 있으므로 필수 파라미터만 주면 된다.
@@ -71,19 +97,22 @@ export PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH
 
 `.data` 아래의 `2019-Oct.csv`, `2019-Nov.csv`를 함께 읽어 전체 기간을 처리하는 기본 예시다.
 
+**Mac 환경 (글로벌 sbt)**
 ```bash
-/usr/bin/env \
-COURSIER_CACHE="$PROJECT_ROOT/.coursier" \
-sbt \
-  -Dsbt.global.base="$PROJECT_ROOT/.sbt" \
-  -Dsbt.boot.directory="$PROJECT_ROOT/.sbt/boot" \
-  -Dsbt.ivy.home="$PROJECT_ROOT/.ivy2" \
-  -Dsbt.coursier.home="$PROJECT_ROOT/.coursier" \
-  "run --start-date 2019-10-01 \
-    --end-date 2019-11-30 \
-    --input-path $PROJECT_ROOT/.data \
-    --run-id full_dataset_run \
-    --execute-wau"
+sbt "run --start-date 2019-10-01 \
+  --end-date 2019-11-30 \
+  --input-path .data \
+  --run-id full_dataset_run \
+  --execute-wau"
+```
+
+**Ubuntu/Linux 환경 (로컬 래퍼 스크립트)**
+```bash
+./sbt "run --start-date 2019-10-01 \
+  --end-date 2019-11-30 \
+  --input-path .data \
+  --run-id full_dataset_run \
+  --execute-wau"
 ```
 
 ### 2. 특정 기간만 부분 실행
@@ -92,19 +121,22 @@ sbt \
 
 예: `2019-10-01 ~ 2019-10-15`
 
+**Mac 환경 (글로벌 sbt)**
 ```bash
-/usr/bin/env \
-COURSIER_CACHE="$PROJECT_ROOT/.coursier" \
-sbt \
-  -Dsbt.global.base="$PROJECT_ROOT/.sbt" \
-  -Dsbt.boot.directory="$PROJECT_ROOT/.sbt/boot" \
-  -Dsbt.ivy.home="$PROJECT_ROOT/.ivy2" \
-  -Dsbt.coursier.home="$PROJECT_ROOT/.coursier" \
-  "run --start-date 2019-10-01 \
-    --end-date 2019-10-15 \
-    --input-path $PROJECT_ROOT/.data/2019-Oct.csv \
-    --run-id oct_1_15_run \
-    --execute-wau"
+sbt "run --start-date 2019-10-01 \
+  --end-date 2019-10-15 \
+  --input-path .data/2019-Oct.csv \
+  --run-id oct_1_15_run \
+  --execute-wau"
+```
+
+**Ubuntu/Linux 환경 (로컬 래퍼 스크립트)**
+```bash
+./sbt "run --start-date 2019-10-01 \
+  --end-date 2019-10-15 \
+  --input-path .data/2019-Oct.csv \
+  --run-id oct_1_15_run \
+  --execute-wau"
 ```
 
 기본값:
@@ -124,31 +156,32 @@ sbt \
 
 전체 테스트:
 
+**Mac 환경:**
 ```bash
-/usr/bin/env \
-COURSIER_CACHE="$PROJECT_ROOT/.coursier" \
-sbt \
-  -Dsbt.global.base="$PROJECT_ROOT/.sbt" \
-  -Dsbt.boot.directory="$PROJECT_ROOT/.sbt/boot" \
-  -Dsbt.ivy.home="$PROJECT_ROOT/.ivy2" \
-  -Dsbt.coursier.home="$PROJECT_ROOT/.coursier" \
-  test
+sbt test
+```
+
+**Ubuntu/Linux 환경:**
+```bash
+./sbt test
 ```
 
 실데이터 스모크:
 
+**Mac 환경:**
 ```bash
-/usr/bin/env \
-COURSIER_CACHE="$PROJECT_ROOT/.coursier" \
 SMOKE_SAMPLE_LIMIT=100000 \
-SMOKE_OUTPUT_PATH="$PROJECT_ROOT/.tmp/smoke-output/oct-limit-100000" \
-HIVE_SMOKE_OUTPUT_PATH="$PROJECT_ROOT/.tmp/smoke-output/hive-oct-limit-100000" \
-sbt \
-  -Dsbt.global.base="$PROJECT_ROOT/.sbt" \
-  -Dsbt.boot.directory="$PROJECT_ROOT/.sbt/boot" \
-  -Dsbt.ivy.home="$PROJECT_ROOT/.ivy2" \
-  -Dsbt.coursier.home="$PROJECT_ROOT/.coursier" \
-  "testOnly smoke.ActivityBatchAppE2ESmokeSpec"
+SMOKE_OUTPUT_PATH="output/smoke-output/oct-limit-100000" \
+HIVE_SMOKE_OUTPUT_PATH="output/smoke-output/hive-oct-limit-100000" \
+sbt "testOnly smoke.ActivityBatchAppE2ESmokeSpec"
+```
+
+**Ubuntu/Linux 환경:**
+```bash
+SMOKE_SAMPLE_LIMIT=100000 \
+SMOKE_OUTPUT_PATH="output/smoke-output/oct-limit-100000" \
+HIVE_SMOKE_OUTPUT_PATH="output/smoke-output/hive-oct-limit-100000" \
+./sbt "testOnly smoke.ActivityBatchAppE2ESmokeSpec"
 ```
 
 ## 주요 산출물
