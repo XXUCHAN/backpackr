@@ -15,25 +15,25 @@ flowchart TD
     %% Processing Layer
     subgraph Spark ETL Pipeline
         Read[CsvReader]
-        Norm[Normalizer\nUTC to KST]
-        Val[Validator\nQuality Check]
+        Norm[Normalizer<br>UTC to KST]
+        Val[Validator<br>Quality Check]
         Dedup[Deduplicator]
-        Sess[Sessionizer\n5min Inactivity]
+        Sess[Sessionizer<br>5min Inactivity]
 
         Read --> Norm --> Val --> Dedup --> Sess
     end
 
     %% Storage Layer
     subgraph Storage & Output
-        DLQ[(DLQ\nInvalid Data)]
+        DLQ[(DLQ<br>Invalid Data)]
         Stage[/Staging Area/]
-        Final[(Final Parquet\nPartitioned by KST)]
+        Final[(Final Parquet<br>Partitioned by KST)]
         Snap[(Session Snapshot)]
     end
 
     %% Hive & Analytics
     subgraph Analytics
-        Hive[(Hive MetaStore\nExternal Table)]
+        Hive[(Hive MetaStore<br>External Table)]
         WAU[WAU & Weekly Sessions]
     end
 
@@ -43,7 +43,7 @@ flowchart TD
     Sess -->|Save State| Snap
     Snap -.->|Load Previous State| Sess
     Sess -->|Write Valid| Stage
-    Stage -->|Atomic Promote\n(Quality Gate)| Final
+    Stage -->|Atomic Promote<br>Quality Gate| Final
 
     Final -->|Register Partitions| Hive
     Hive -->|Execute Query| WAU
