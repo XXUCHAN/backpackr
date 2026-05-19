@@ -2,6 +2,61 @@
 
 Kaggle Ecommerce Activity 로그를 Spark로 처리하여 KST 기준 parquet dataset, Hive external table, WAU 결과를 생성하는 Spark Application 과제다.
 
+## 🏗 아키텍처 파이프라인 (Architecture Pipeline)
+
+```mermaid
+flowchart TD
+    %% Input Layer
+    subgraph Data Sources
+        R1[(2019-Oct.csv)]
+        R2[(2019-Nov.csv)]
+    end
+
+    %% Processing Layer
+    subgraph Spark ETL Pipeline
+        Read[CsvReader]
+        Norm[Normalizer\nUTC to KST]
+        Val[Validator\nQuality Check]
+        Dedup[Deduplicator]
+        Sess[Sessionizer\n5min Inactivity]
+
+        Read --> Norm --> Val --> Dedup --> Sess
+    end
+
+    %% Storage Layer
+    subgraph Storage & Output
+        DLQ[(DLQ\nInvalid Data)]
+        Stage[/Staging Area/]
+        Final[(Final Parquet\nPartitioned by KST)]
+        Snap[(Session Snapshot)]
+    end
+
+    %% Hive & Analytics
+    subgraph Analytics
+        Hive[(Hive MetaStore\nExternal Table)]
+        WAU[WAU & Weekly Sessions]
+    end
+
+    %% Flow Connections
+    R1 & R2 -->|Load| Read
+    Val -->|Reject| DLQ
+    Sess -->|Save State| Snap
+    Snap -.->|Load Previous State| Sess
+    Sess -->|Write Valid| Stage
+    Stage -->|Atomic Promote\n(Quality Gate)| Final
+
+    Final -->|Register Partitions| Hive
+    Hive -->|Execute Query| WAU
+
+    %% Style
+    classDef default fill:#f9f9f9,stroke:#333,stroke-width:1px;
+    classDef primary fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
+    classDef error fill:#ffebee,stroke:#f44336,stroke-width:2px;
+
+    class Final,Hive,WAU primary;
+    class DLQ error;
+```
+
 현재 구현 범위:
 
 - UTC 원천 이벤트 정규화
@@ -18,38 +73,29 @@ Kaggle Ecommerce Activity 로그를 Spark로 처리하여 KST 기준 parquet dat
 ## 요구사항 대응
 
 - **구현 언어**: Scala 2.12
-- **Scala 선택 사유**: Spark DataFrame API, Window Function, SQL DSL을 가장 간결하게 표현할 수 있고, 세션화와 partition 처리 구현이 Java 대비 짧고 읽기 쉽다.
+- **Scala 선택 사유**:
+  - 평소 TypeScript를 다루며 함수형 프로그래밍(FP)에 익숙한데, Scala 역시 메서드 체이닝(Method Chaining) 등 강력한 FP 패러다임을 지원하여 데이터 변환 과정을 매우 간결하고 직관적으로 작성할 수 있었다.
+  - Java를 사용할 때 발생하는 불필요한 보일러플레이트 코드가 없어 전체 코드 길이가 짧아지고 유지보수를 위한 가독성이 크게 향상되었다.
+  - 추가로 Spark의 네이티브 언어인 만큼 DataFrame API, Window Function, SQL DSL 등을 가장 매끄럽고 강력하게 활용할 수 있다는 점이 큰 장점으로 작용했다.
 - **입력 데이터**: `2019-Oct.csv`, `2019-Nov.csv`
 - **KST daily partition**: `event_date_kst`
 - **세션 규칙**: 동일 `user_id` 내 `event_time` 간격이 5분 이상이면 새 `session_id` 생성
 - **저장 포맷**: parquet + snappy
-- **재처리 대응**: `start-date`, `end-date` 기반 날짜 범위 재실행 지원
+- **재처리 대응**: `start-date`, `end-date` 파라미터 기반 특정 날짜 범위 부분 재실행 지원
+- **추가 기간 데이터 처리 (Incremental Processing)**: 이전 배치의 마지막 세션 상태(Snapshot)를 로드하여 새로운 기간의 데이터와 병합함으로써, 배치 경계(자정 등)에 걸친 세션도 연속적으로 분리 및 추적
 - **External Table 방식**: final parquet를 Hive external table `activity_events`로 등록
 - **배치 장애 복구 장치**: preflight validation, quality gate, staging -> final promote, rollback / retry, batch run log
 - **WAU 계산**:
   - `user_id` 기준 WAU
   - `session_id` 기준 Weekly Active Sessions
 
-## 실행 환경
+## 실행 환경 (Tech Stack)
 
-- JDK 17
-- sbt 1.10+
-- Spark 3.5
-
-macOS + Homebrew 예시:
-
-```bash
-brew install sbt
-brew install openjdk@17
-```
-
-실행 전:
-
-```bash
-export PROJECT_ROOT="$(pwd)"
-export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
-export PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH
-```
+- **Scala**: 2.12
+- **Spark**: 3.5.x (3.5.1)
+- **JDK**: 17
+- **SBT**: 1.10+
+- **Infrastructure**: Docker Compose 기반
 
 ## 입력 데이터
 
@@ -65,13 +111,7 @@ export PATH=/opt/homebrew/opt/openjdk@17/bin:$PATH
 
 ## 0. 사전 준비 (Prerequisites)
 
-본 프로젝트는 복잡한 Java(JDK)나 SBT 설정 과정 없이, **Docker Compose**를 통해 가장 쉽고 확실하게 실행하는 것을 강력히 권장합니다.
-OS 환경(Mac, Windows, Ubuntu)에 구애받지 않고 명령어 한 줄로 즉시 실행할 수 있습니다.
-
-- **설치:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치 후 켜져 있는지 확인해 주세요.
-
-> **💡 참고 (도커를 사용하지 않는 로컬 환경의 경우)**
-> 만약 도커 없이 직접 실행하길 원한다면, 시스템에 **JDK 11 이상** (권장: JDK 17) 및 **SBT(Scala Build Tool)** 가 설치되어 있어야 하며 올바른 `JAVA_HOME` 환경 변수 설정이 필요합니다.
+- **설치:** [Docker Desktop](https://www.docker.com/products/docker-desktop/) 설치
 
 ## 실행 방법
 
