@@ -57,8 +57,9 @@ flowchart TD
     Final -->|Register Partitions| Hive
     Hive -->|Execute Query| WAU
     
-    Final -.->|Log Status| Logger
-    WAU -.->|Log Status| Logger
+    %% Intermediate & Final Status Logging
+    Norm & Val & Dedup & Sess -.-> Logger
+    Stage & Final & Hive & WAU -.-> Logger
 
     %% Style
     classDef default fill:#ffffff,stroke:#333,stroke-width:1px,color:#333;
