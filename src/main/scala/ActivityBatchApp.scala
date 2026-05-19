@@ -182,11 +182,11 @@ object ActivityBatchApp {
             val weeklyActiveSessionRows = weeklyActiveSessions.collect().toSeq
             val userWauWeekCount = userWauRows.size.toLong
             val weeklyActiveSessionWeekCount = weeklyActiveSessionRows.size.toLong
-            val userWauMinWeek = userWauRows.headOption.map(row => row.getAs[Date]("week_start_kst").toString)
-            val userWauMaxWeek = userWauRows.lastOption.map(row => row.getAs[Date]("week_start_kst").toString)
-            val weeklyActiveSessionsMinWeek =
+            val userWauStartWeek = userWauRows.headOption.map(row => row.getAs[Date]("week_start_kst").toString)
+            val userWauEndWeek = userWauRows.lastOption.map(row => row.getAs[Date]("week_start_kst").toString)
+            val weeklyActiveSessionsStartWeek =
               weeklyActiveSessionRows.headOption.map(row => row.getAs[Date]("week_start_kst").toString)
-            val weeklyActiveSessionsMaxWeek =
+            val weeklyActiveSessionsEndWeek =
               weeklyActiveSessionRows.lastOption.map(row => row.getAs[Date]("week_start_kst").toString)
 
             println("wau_users:")
@@ -194,10 +194,10 @@ object ActivityBatchApp {
             println("weekly_active_sessions:")
             weeklyActiveSessions.show(100, truncate = false)
             println(
-              s"wau_summary=week_count=$userWauWeekCount min_week=${userWauMinWeek.getOrElse("n/a")} max_week=${userWauMaxWeek.getOrElse("n/a")}"
+              s"wau_summary=week_count=$userWauWeekCount start_week=${userWauStartWeek.getOrElse("n/a")} end_week=${userWauEndWeek.getOrElse("n/a")}"
             )
             println(
-              s"weekly_active_sessions_summary=week_count=$weeklyActiveSessionWeekCount min_week=${weeklyActiveSessionsMinWeek.getOrElse("n/a")} max_week=${weeklyActiveSessionsMaxWeek.getOrElse("n/a")}"
+              s"weekly_active_sessions_summary=week_count=$weeklyActiveSessionWeekCount start_week=${weeklyActiveSessionsStartWeek.getOrElse("n/a")} end_week=${weeklyActiveSessionsEndWeek.getOrElse("n/a")}"
             )
 
             Some(
@@ -205,11 +205,11 @@ object ActivityBatchApp {
                 wauUsersOutputPath = wauUsersOutputPath,
                 weeklyActiveSessionsOutputPath = weeklyActiveSessionsOutputPath,
                 wauUsersWeekCount = userWauWeekCount,
-                wauUsersMinWeek = userWauMinWeek,
-                wauUsersMaxWeek = userWauMaxWeek,
+                wauUsersStartWeek = userWauStartWeek,
+                wauUsersEndWeek = userWauEndWeek,
                 weeklyActiveSessionsWeekCount = weeklyActiveSessionWeekCount,
-                weeklyActiveSessionsMinWeek = weeklyActiveSessionsMinWeek,
-                weeklyActiveSessionsMaxWeek = weeklyActiveSessionsMaxWeek
+                weeklyActiveSessionsStartWeek = weeklyActiveSessionsStartWeek,
+                weeklyActiveSessionsEndWeek = weeklyActiveSessionsEndWeek
               )
             )
           } else {
@@ -245,11 +245,11 @@ object ActivityBatchApp {
           wauUsersOutputPath = wauSummary.map(_.wauUsersOutputPath),
           weeklyActiveSessionsOutputPath = wauSummary.map(_.weeklyActiveSessionsOutputPath),
           wauUsersWeekCount = wauSummary.map(_.wauUsersWeekCount),
-          wauUsersMinWeek = wauSummary.flatMap(_.wauUsersMinWeek),
-          wauUsersMaxWeek = wauSummary.flatMap(_.wauUsersMaxWeek),
+          wauUsersStartWeek = wauSummary.flatMap(_.wauUsersStartWeek),
+          wauUsersEndWeek = wauSummary.flatMap(_.wauUsersEndWeek),
           weeklyActiveSessionsWeekCount = wauSummary.map(_.weeklyActiveSessionsWeekCount),
-          weeklyActiveSessionsMinWeek = wauSummary.flatMap(_.weeklyActiveSessionsMinWeek),
-          weeklyActiveSessionsMaxWeek = wauSummary.flatMap(_.weeklyActiveSessionsMaxWeek)
+          weeklyActiveSessionsStartWeek = wauSummary.flatMap(_.weeklyActiveSessionsStartWeek),
+          weeklyActiveSessionsEndWeek = wauSummary.flatMap(_.weeklyActiveSessionsEndWeek)
         )
 
         println(s"mode=${config.mode.entryName}")
@@ -315,10 +315,10 @@ object ActivityBatchApp {
       wauUsersOutputPath: String,
       weeklyActiveSessionsOutputPath: String,
       wauUsersWeekCount: Long,
-      wauUsersMinWeek: Option[String],
-      wauUsersMaxWeek: Option[String],
+      wauUsersStartWeek: Option[String],
+      wauUsersEndWeek: Option[String],
       weeklyActiveSessionsWeekCount: Long,
-      weeklyActiveSessionsMinWeek: Option[String],
-      weeklyActiveSessionsMaxWeek: Option[String]
+      weeklyActiveSessionsStartWeek: Option[String],
+      weeklyActiveSessionsEndWeek: Option[String]
   )
 }

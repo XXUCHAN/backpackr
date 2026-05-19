@@ -33,11 +33,11 @@ object BatchRunLogger {
       wauUsersOutputPath: Option[String] = None,
       weeklyActiveSessionsOutputPath: Option[String] = None,
       wauUsersWeekCount: Option[Long] = None,
-      wauUsersMinWeek: Option[String] = None,
-      wauUsersMaxWeek: Option[String] = None,
+      wauUsersStartWeek: Option[String] = None,
+      wauUsersEndWeek: Option[String] = None,
       weeklyActiveSessionsWeekCount: Option[Long] = None,
-      weeklyActiveSessionsMinWeek: Option[String] = None,
-      weeklyActiveSessionsMaxWeek: Option[String] = None
+      weeklyActiveSessionsStartWeek: Option[String] = None,
+      weeklyActiveSessionsEndWeek: Option[String] = None
   ): Unit = {
     val logPath = Paths.get(PathBuilder.batchRunLogPath(runLogBasePath, runId))
     Option(logPath.getParent).foreach(parent => Files.createDirectories(parent))
@@ -63,11 +63,11 @@ object BatchRunLogger {
     wauUsersOutputPath.foreach(value => payload.put("wau_users_output_path", value))
     weeklyActiveSessionsOutputPath.foreach(value => payload.put("weekly_active_sessions_output_path", value))
     wauUsersWeekCount.foreach(value => payload.put("wau_users_week_count", value))
-    wauUsersMinWeek.foreach(value => payload.put("wau_users_min_week", value))
-    wauUsersMaxWeek.foreach(value => payload.put("wau_users_max_week", value))
+    wauUsersStartWeek.foreach(value => payload.put("wau_users_start_week", value))
+    wauUsersEndWeek.foreach(value => payload.put("wau_users_end_week", value))
     weeklyActiveSessionsWeekCount.foreach(value => payload.put("weekly_active_sessions_week_count", value))
-    weeklyActiveSessionsMinWeek.foreach(value => payload.put("weekly_active_sessions_min_week", value))
-    weeklyActiveSessionsMaxWeek.foreach(value => payload.put("weekly_active_sessions_max_week", value))
+    weeklyActiveSessionsStartWeek.foreach(value => payload.put("weekly_active_sessions_start_week", value))
+    weeklyActiveSessionsEndWeek.foreach(value => payload.put("weekly_active_sessions_end_week", value))
 
     if (qualityGateWarnings.nonEmpty) {
       val warnings = objectMapper.createArrayNode()
