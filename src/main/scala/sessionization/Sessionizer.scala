@@ -8,6 +8,7 @@ object Sessionizer {
   private val SessionGapSeconds = 300L
   private val NullToken = "__null__"
   private val KstZoneId = "Asia/Seoul"
+  private val WeekStartDay = "MON"
 
   def apply(df: DataFrame): DataFrame =
     apply(df, None)
@@ -54,6 +55,7 @@ object Sessionizer {
 
     withFinalSessionStartTime
       .withColumn("session_start_time_kst", from_utc_timestamp(col("session_start_time_utc"), KstZoneId))
+      .withColumn("session_start_week_kst", date_sub(next_day(to_date(col("session_start_time_kst")), WeekStartDay), 7))
       .withColumn(
         "session_id",
         sha2(

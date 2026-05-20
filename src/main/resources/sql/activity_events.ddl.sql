@@ -9,10 +9,12 @@ CREATE EXTERNAL TABLE IF NOT EXISTS activity_events (
   price decimal(18,2),
   user_id bigint,
   raw_user_session string,
+  week_start_kst date,
   dedup_key string,
   session_id string,
   session_start_time_utc timestamp,
   session_start_time_kst timestamp,
+  session_start_week_kst date,
   ingested_at timestamp,
   run_id string
 )

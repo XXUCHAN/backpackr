@@ -6,7 +6,7 @@ import org.apache.spark.storage.StorageLevel
 import query.{HiveTableManager, WauQueryExecutor}
 import reader.CsvActivityReader
 import sessionization.{SessionStateStore, Sessionizer}
-import support.{EventDateRangeFilter, PathBuilder, PreflightValidator, QualityGate, SparkSessionFactory}
+import support.{EventDateRangeFilter, PathBuilder, PreflightValidator, QualityGate, SparkSessionFactory, WeekRangeCalculator}
 import transform.{ActivityNormalizer, Deduplicator, Validator}
 import writer.{ActivityWriter, DlqWriter}
 
@@ -14,6 +14,9 @@ import java.sql.Date
 import java.time.{Instant, LocalDate}
 
 object ActivityBatchApp {
+  private val WauUsersTableName = "wau_users_by_week"
+  private val WeeklyActiveSessionsTableName = "weekly_active_sessions_by_week"
+
   def main(args: Array[String]): Unit = {
     val config = AppConfigParser.parse(args)
     val startedAt = Instant.now
@@ -23,9 +26,11 @@ object ActivityBatchApp {
     val dlqOutputPath = s"${PathBuilder.stagingRunPath(config.dlqBasePath, config.runId)}/invalid"
     val finalOutputPath = Option(config.outputBasePath).map(_.trim).filter(_.nonEmpty)
     val shouldRegisterHivePartitions = config.registerHivePartitions || config.executeWau
-    val wauRunPath = PathBuilder.wauRunPath(config.wauOutputBasePath, config.runId)
-    val wauUsersOutputPath = s"$wauRunPath/wau-users"
-    val weeklyActiveSessionsOutputPath = s"$wauRunPath/weekly-active-sessions"
+    val (affectedWeekStart, affectedWeekEnd) =
+      WeekRangeCalculator.affectedWeekRange(config.startDate, config.endDate)
+    val affectedWeeks = WeekRangeCalculator.affectedWeeks(config.startDate, config.endDate)
+    val wauUsersOutputPath = s"${config.wauOutputBasePath}/wau-users-by-week"
+    val weeklyActiveSessionsOutputPath = s"${config.wauOutputBasePath}/weekly-active-sessions-by-week"
 
     try {
       PreflightValidator.validate(config)
@@ -273,15 +278,42 @@ object ActivityBatchApp {
               snapshotTargetDate = Some(config.endDate),
               uniqueSessionCount = Some(uniqueSessionCount),
               registeredHivePartitionsCount = Some(registeredHivePartitions.size),
-              sessionSnapshotPath = Some(sessionSnapshotPath)
+              sessionSnapshotPath = Some(sessionSnapshotPath),
+              message = Some(s"affected_week_start=$affectedWeekStart; affected_week_end=$affectedWeekEnd")
             )
             println(s"batch_status=${BatchRunStatus.WauCompleted.entryName}")
 
-            val userWau = WauQueryExecutor.runUserWau(spark, config.hiveTableName)
-            val weeklyActiveSessions = WauQueryExecutor.runWeeklyActiveSessions(spark, config.hiveTableName)
+            val userWau = WauQueryExecutor.runUserWau(
+              spark,
+              config.hiveTableName,
+              affectedWeekStart = Some(affectedWeekStart),
+              affectedWeekEnd = Some(affectedWeekEnd)
+            )
+            val weeklyActiveSessions = WauQueryExecutor.runWeeklyActiveSessions(
+              spark,
+              config.hiveTableName,
+              affectedWeekStart = Some(affectedWeekStart),
+              affectedWeekEnd = Some(affectedWeekEnd)
+            )
 
             WauQueryExecutor.writeResult(userWau, wauUsersOutputPath)
             WauQueryExecutor.writeResult(weeklyActiveSessions, weeklyActiveSessionsOutputPath)
+
+            if (shouldRegisterHivePartitions) {
+              HiveTableManager.createWauUsersTable(spark, WauUsersTableName, wauUsersOutputPath)
+              HiveTableManager.addWeekPartitions(spark, WauUsersTableName, wauUsersOutputPath, affectedWeeks)
+              HiveTableManager.createWeeklyActiveSessionsTable(
+                spark,
+                WeeklyActiveSessionsTableName,
+                weeklyActiveSessionsOutputPath
+              )
+              HiveTableManager.addWeekPartitions(
+                spark,
+                WeeklyActiveSessionsTableName,
+                weeklyActiveSessionsOutputPath,
+                affectedWeeks
+              )
+            }
 
             val userWauRows = userWau.collect().toSeq
             val weeklyActiveSessionRows = weeklyActiveSessions.collect().toSeq
@@ -304,6 +336,7 @@ object ActivityBatchApp {
             println(
               s"weekly_active_sessions_summary=week_count=$weeklyActiveSessionWeekCount start_week=${weeklyActiveSessionsStartWeek.getOrElse("n/a")} end_week=${weeklyActiveSessionsEndWeek.getOrElse("n/a")}"
             )
+            println(s"wau_affected_week_range=$affectedWeekStart,$affectedWeekEnd")
 
             Some(
               WauExecutionSummary(
@@ -350,6 +383,7 @@ object ActivityBatchApp {
           uniqueSessionCount = Some(uniqueSessionCount),
           registeredHivePartitionsCount = Some(registeredHivePartitions.size),
           sessionSnapshotPath = Some(sessionSnapshotPath),
+          message = Some(s"affected_week_start=$affectedWeekStart; affected_week_end=$affectedWeekEnd"),
           wauUsersOutputPath = wauSummary.map(_.wauUsersOutputPath),
           weeklyActiveSessionsOutputPath = wauSummary.map(_.weeklyActiveSessionsOutputPath),
           wauUsersWeekCount = wauSummary.map(_.wauUsersWeekCount),

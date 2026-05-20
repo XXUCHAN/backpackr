@@ -88,9 +88,11 @@ class SessionizerSpec extends SparkFunSuite {
 
     assert(sessionized.columns.contains("session_start_time_utc"))
     assert(sessionized.columns.contains("session_start_time_kst"))
+    assert(sessionized.columns.contains("session_start_week_kst"))
     assert(sessionized.columns.contains("session_id"))
     assert(sessionized.filter("session_start_time_utc is null").count() === 0L)
     assert(sessionized.filter("session_start_time_kst is null").count() === 0L)
+    assert(sessionized.filter("session_start_week_kst is null").count() === 0L)
     assert(sessionized.filter("session_id is null").count() === 0L)
   }
 

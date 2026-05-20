@@ -32,6 +32,7 @@ class ActivityNormalizerSpec extends SparkFunSuite {
         date_format(col("event_time_utc"), "yyyy-MM-dd HH:mm:ss").as("event_time_utc_str"),
         date_format(col("event_time_kst"), "yyyy-MM-dd HH:mm:ss").as("event_time_kst_str"),
         col("event_date_kst").cast("string").as("event_date_kst_str"),
+        col("week_start_kst").cast("string").as("week_start_kst_str"),
         col("normalized_price"),
         col("raw_user_session"),
         col("run_id"),
@@ -42,6 +43,7 @@ class ActivityNormalizerSpec extends SparkFunSuite {
     assert(row.getAs[String]("event_time_utc_str") === "2019-10-01 00:00:00")
     assert(row.getAs[String]("event_time_kst_str") === "2019-10-01 09:00:00")
     assert(row.getAs[String]("event_date_kst_str") === "2019-10-01")
+    assert(row.getAs[String]("week_start_kst_str") === "2019-09-30")
     assert(row.getAs[java.math.BigDecimal]("normalized_price").toPlainString === "10.50")
     assert(row.getAs[String]("raw_user_session") === "raw-session-1")
     assert(row.getAs[String]("run_id") === "run-1")
