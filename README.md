@@ -74,6 +74,41 @@ flowchart TD
     class Preflight,Logger ops;
 ```
 
+## 데이터셋 구조 (Logical Table Model)
+
+```mermaid
+flowchart LR
+    subgraph Base["Base Table"]
+        AE["activity_events
+partition: event_date_kst
+user_id
+session_id
+week_start_kst
+session_start_week_kst"]
+    end
+
+    subgraph State["State Table"]
+        SS["session_state_snapshot
+partition: snapshot_date_kst
+user_id
+last_session_start_time_utc
+last_event_time_utc"]
+    end
+
+    subgraph Aggregate["Aggregate Tables"]
+        WU["wau_users_by_week
+partition: week_start_kst
+metric: wau_users"]
+        WS["weekly_active_sessions_by_week
+partition: week_start_kst
+metric: weekly_active_sessions"]
+    end
+
+    SS -. "seed for next batch" .-> AE
+    AE -->|"weekly distinct user aggregation"| WU
+    AE -->|"weekly distinct session aggregation"| WS
+```
+
 현재 구현 범위:
 
 - UTC 원천 이벤트 정규화
@@ -194,6 +229,7 @@ sbt "run --start-date 2019-10-01 \
 
 `--execute-wau`를 주면 Hive external table 생성, partition 등록, WAU 실행까지 함께 수행한다.
 WAU 결과는 주간 aggregate dataset으로 관리되며, 이번 실행이 걸친 주차만 다시 계산한다.
+즉 `activity_events` 전체를 매번 full scan 하지 않고, `start-date`, `end-date`가 영향을 주는 `week_start_kst` 범위만 집계한 뒤 해당 주차 partition만 overwrite 한다.
 
 ## 테스트
 
@@ -287,6 +323,17 @@ Weekly Active Sessions 결과:
 
 ## WAU 계산 쿼리
 
+`activity_events`는 **event-level base table** 이므로, 하나의 `user_id` 또는 `session_id`가 같은 주차 안에서 여러 이벤트 row에 반복될 수 있다.
+따라서 WAU 계산에는 row count가 아니라 distinct 기반 집계가 필요하다.
+
+- `user_id` 기준 WAU:
+  - 같은 주차에 여러 이벤트를 발생시킨 동일 사용자는 `1명`으로 계산
+- `session_id` 기준 Weekly Active Sessions:
+  - 같은 세션에 속한 여러 이벤트 row는 `1개 세션`으로 계산
+
+현재 구현은 전체 기간을 매번 다시 집계하는 방식이 아니라, 실행 범위가 영향을 주는 주차만 다시 계산한다.
+예를 들어 `2019-12-01 ~ 2019-12-07` 실행이면 영향 주차는 `2019-11-25`, `2019-12-02` 이므로, 이 두 주차만 다시 읽고 aggregate 결과의 해당 partition만 갱신한다.
+
 ### 6-a. `user_id` 기준 WAU
 
 ```sql
@@ -294,10 +341,15 @@ SELECT
   week_start_kst,
   COUNT(DISTINCT user_id) AS wau_users
 FROM activity_events
-WHERE week_start_kst BETWEEN DATE '2019-09-30' AND DATE '2019-11-25'
+WHERE week_start_kst BETWEEN DATE :affected_start_week AND DATE :affected_end_week
 GROUP BY week_start_kst
 ORDER BY week_start_kst;
 ```
+
+집계 결과는 다음 aggregate dataset / Hive external table에 저장된다.
+
+- dataset: `output/wau-results/wau-users-by-week/week_start_kst=...`
+- table: `wau_users_by_week`
 
 ### 6-b. `session_id` 기준 Weekly Active Sessions
 
@@ -307,7 +359,7 @@ WITH sessions AS (
     session_id,
     session_start_week_kst AS week_start_kst
   FROM activity_events
-  WHERE session_start_week_kst BETWEEN DATE '2019-09-30' AND DATE '2019-11-25'
+  WHERE session_start_week_kst BETWEEN DATE :affected_start_week AND DATE :affected_end_week
 )
 SELECT
   week_start_kst,
@@ -316,6 +368,18 @@ FROM sessions
 GROUP BY week_start_kst
 ORDER BY week_start_kst;
 ```
+
+집계 결과는 다음 aggregate dataset / Hive external table에 저장된다.
+
+- dataset: `output/wau-results/weekly-active-sessions-by-week/week_start_kst=...`
+- table: `weekly_active_sessions_by_week`
+
+요약하면, 현재 WAU 설계는 다음과 같다.
+
+1. `activity_events`는 날짜 partition(`event_date_kst`) 기준 base table로 유지한다.
+2. WAU는 `week_start_kst`, `session_start_week_kst` 기준으로 필요한 주차만 다시 읽는다.
+3. 계산 결과는 주간 aggregate table에 저장하고, 영향받은 주차 partition만 overwrite 한다.
+4. 이를 통해 추가 기간 데이터가 들어와도 전체 이력을 다시 집계하지 않고 부분 재집계가 가능하다.
 
 ## 운영 포인트
 
@@ -328,6 +392,6 @@ ORDER BY week_start_kst;
 
 ## 산출 결과 분석 (Data Insights)
 
-1. **세션 분리 로직의 무결성 증명**: 10월 평균 WAU는 약 105만 명, 세션 수는 약 215만 개로 유저당 주 평균 2.0회 이상의 세션이 생성되었다. 이는 `5분 Inactivity` 기반 Window 함수 연산과 세션 분리 로직이 정확하게 동작함을 증명한다.
-2. **이커머스 계절성 트래픽 처리 검증**: 11월 11일(광군제 시즌) 주차에는 WAU가 154만 명으로 약 50% 증가한 데 비해, 세션 수는 475만 개로 약 220% 폭증했다. 4,200만 건 이상의 대용량 트래픽 스파이크 구간에서도 파이프라인의 데이터 누락 없이 100% 처리되었다.
-3. **날짜 경계 및 파티셔닝 정확도**: 첫 주차(10/01~10/06, 6일치)의 WAU(81.8만)는 온전한 주차 평균의 약 6/7 비율로 산출되었으며, 10월 내내 중복 없이 105만 명 선을 일정하게 유지했다. 이는 KST 기준 주간 그룹핑 및 멱등성 보장 로직이 완벽히 동작하고 있음을 의미한다.
+1. **세션 분리 로직의 무결성 검증**: 10월의 온전한 주차(`2019-10-07 ~ 2019-10-28`) 기준 WAU는 약 `107만`, Weekly Active Sessions는 약 `216만` 수준으로 집계되었다. 이를 통해 동일 사용자 기준 주간 활성 규모와 세션 수가 안정적으로 분리되었고, `5분 inactivity` 기반 세션화 로직이 대규모 데이터에서도 일관되게 동작함을 확인하였다.
+2. **이커머스 계절성 트래픽 처리 검증**: `2019-11-11` 주차에는 `WAU = 1,543,309`, `Weekly Active Sessions = 4,752,893`로 집계되었다. 이는 10월 온전한 주차 평균 대비 WAU는 약 `43.7%`, 세션 수는 약 `2.19배` 증가한 수준이다. 전체 `109,950,743`건의 입력 데이터에 대해 invalid row 없이 배치를 완료했으며, `61`개 KST 일별 partition과 `9`개 주차 aggregate 결과를 정상 생성하였다.
+3. **날짜 경계 및 파티셔닝 정확도**: 첫 주차 `2019-09-30`의 WAU는 `818,388`로 이후 온전한 주차 대비 낮게 집계되었다. 이는 실제로 `2019-10-01 ~ 2019-10-06`만 포함된 partial week 특성을 반영한 결과이며, 이후 주차들이 `week_start_kst` 기준으로 안정적으로 집계된 것을 통해 KST 기준 주간 그룹핑과 partition 설계가 의도대로 동작함을 확인하였다.
