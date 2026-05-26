@@ -14,8 +14,7 @@ services:
       sbt "run --start-date 2019-10-01
         --end-date 2019-11-30
         --input-path .data
-        --run-id full_dataset_run
-        --execute-wau"
+        --run-id full_dataset_run"
 
 volumes:
   sbt-cache:

@@ -3,7 +3,7 @@ package smoke
 import config.AppConfig
 import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchMode, BatchRunStatus}
-import org.apache.spark.sql.functions.{col, coalesce, length, lit, not}
+import org.apache.spark.sql.functions.{col, coalesce, count, length, lit, sum}
 import query.{HiveTableManager, WauQueryExecutor}
 import reader.CsvActivityReader
 import sessionization.{SessionStateStore, Sessionizer}

@@ -94,7 +94,7 @@ class PreflightValidatorSpec extends AnyFunSuite {
     assert(error.getMessage.contains("staging path for run_id already exists"))
   }
 
-  test("preflight validator should fail when Hive partition registration is enabled without output path") {
+  test("preflight validator should fail when output path is missing") {
     val baseDir = Files.createTempDirectory("preflight-missing-output-")
     val inputFile = Files.createTempFile(baseDir, "input", ".csv")
 
@@ -106,7 +106,6 @@ class PreflightValidatorSpec extends AnyFunSuite {
       stagingBasePath = baseDir.resolve("staging").toString,
       dlqBasePath = baseDir.resolve("dlq").toString,
       runLogBasePath = baseDir.resolve("run-log").toString,
-      registerHivePartitions = true,
       outputBasePath = "",
       runId = "run-1"
     )
@@ -118,8 +117,8 @@ class PreflightValidatorSpec extends AnyFunSuite {
     assert(error.getMessage.contains("output-base-path must be provided"))
   }
 
-  test("preflight validator should pass when execute-wau is enabled with default final output path") {
-    val baseDir = Files.createTempDirectory("preflight-execute-wau-")
+  test("preflight validator should pass with final output path") {
+    val baseDir = Files.createTempDirectory("preflight-final-output-")
     val inputFile = Files.createTempFile(baseDir, "input", ".csv")
 
     val config = AppConfig(
@@ -131,7 +130,6 @@ class PreflightValidatorSpec extends AnyFunSuite {
       dlqBasePath = baseDir.resolve("dlq").toString,
       runLogBasePath = baseDir.resolve("run-log").toString,
       outputBasePath = baseDir.resolve("final-output").toString,
-      executeWau = true,
       runId = "run-1"
     )
 

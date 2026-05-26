@@ -24,8 +24,7 @@ object ActivityBatchApp {
     val previousSnapshotDate = LocalDate.parse(targetDate).minusDays(1).toString
     val validOutputPath = s"${PathBuilder.stagingRunPath(config.stagingBasePath, config.runId)}/valid"
     val dlqOutputPath = s"${PathBuilder.stagingRunPath(config.dlqBasePath, config.runId)}/invalid"
-    val finalOutputPath = Option(config.outputBasePath).map(_.trim).filter(_.nonEmpty)
-    val shouldRegisterHivePartitions = config.registerHivePartitions || config.executeWau
+    val finalOutputPath = config.outputBasePath.trim
     val (affectedWeekStart, affectedWeekEnd) =
       WeekRangeCalculator.affectedWeekRange(config.startDate, config.endDate)
     val affectedWeeks = WeekRangeCalculator.affectedWeeks(config.startDate, config.endDate)
@@ -42,7 +41,7 @@ object ActivityBatchApp {
         startedAt = startedAt,
         stagingPath = Some(validOutputPath),
         dlqPath = Some(dlqOutputPath),
-        finalOutputPath = finalOutputPath,
+        finalOutputPath = Some(finalOutputPath),
         processingStartDate = Some(config.startDate),
         processingEndDate = Some(config.endDate),
         snapshotSeedDate = Some(previousSnapshotDate),
@@ -65,7 +64,7 @@ object ActivityBatchApp {
           startedAt = startedAt,
           stagingPath = Some(validOutputPath),
           dlqPath = Some(dlqOutputPath),
-          finalOutputPath = finalOutputPath,
+          finalOutputPath = Some(finalOutputPath),
           processingStartDate = Some(config.startDate),
           processingEndDate = Some(config.endDate),
           snapshotSeedDate = Some(previousSnapshotDate),
@@ -84,7 +83,7 @@ object ActivityBatchApp {
           startedAt = startedAt,
           stagingPath = Some(validOutputPath),
           dlqPath = Some(dlqOutputPath),
-          finalOutputPath = finalOutputPath,
+          finalOutputPath = Some(finalOutputPath),
           processingStartDate = Some(config.startDate),
           processingEndDate = Some(config.endDate),
           snapshotSeedDate = Some(previousSnapshotDate),
@@ -122,7 +121,7 @@ object ActivityBatchApp {
           startedAt = startedAt,
           stagingPath = Some(validOutputPath),
           dlqPath = Some(dlqOutputPath),
-          finalOutputPath = finalOutputPath,
+          finalOutputPath = Some(finalOutputPath),
           processingStartDate = Some(config.startDate),
           processingEndDate = Some(config.endDate),
           snapshotSeedDate = Some(previousSnapshotDate),
@@ -158,7 +157,7 @@ object ActivityBatchApp {
           startedAt = startedAt,
           stagingPath = Some(validOutputPath),
           dlqPath = Some(dlqOutputPath),
-          finalOutputPath = finalOutputPath,
+          finalOutputPath = Some(finalOutputPath),
           processingStartDate = Some(config.startDate),
           processingEndDate = Some(config.endDate),
           snapshotSeedDate = Some(previousSnapshotDate),
@@ -209,7 +208,7 @@ object ActivityBatchApp {
           startedAt = startedAt,
           stagingPath = Some(validOutputPath),
           dlqPath = Some(dlqOutputPath),
-          finalOutputPath = finalOutputPath,
+          finalOutputPath = Some(finalOutputPath),
           processingStartDate = Some(config.startDate),
           processingEndDate = Some(config.endDate),
           snapshotSeedDate = Some(previousSnapshotDate),
@@ -226,139 +225,122 @@ object ActivityBatchApp {
         ActivityWriter.writeToStaging(sessionizedValid, validOutputPath)
         DlqWriter.write(invalid, dlqOutputPath)
 
-        finalOutputPath.foreach { outputPath =>
-          ActivityWriter.promoteToFinal(validOutputPath, outputPath, outputPartitions)
-          ActivityWriter.cleanupPath(validOutputPath)
-        }
+        ActivityWriter.promoteToFinal(validOutputPath, finalOutputPath, outputPartitions)
+        ActivityWriter.cleanupPath(validOutputPath)
 
         val snapshotTargetDate = config.endDate
         val sessionSnapshot = SessionStateStore.buildSnapshot(sessionizedValid, snapshotTargetDate, config.runId)
         val sessionSnapshotPath =
           SessionStateStore.saveSnapshot(sessionSnapshot, config.sessionStateBasePath, snapshotTargetDate)
 
-        if (shouldRegisterHivePartitions) {
-          BatchRunLogger.logStatus(
-            runLogBasePath = config.runLogBasePath,
-            runId = config.runId,
-            targetDate = targetDate,
-            status = BatchRunStatus.HiveRegistered,
-            startedAt = startedAt,
-            stagingPath = Some(validOutputPath),
-            dlqPath = Some(dlqOutputPath),
-            finalOutputPath = finalOutputPath,
-            processingStartDate = Some(config.startDate),
-            processingEndDate = Some(config.endDate),
-            snapshotSeedDate = Some(previousSnapshotDate),
-            snapshotTargetDate = Some(config.endDate),
-            uniqueSessionCount = Some(uniqueSessionCount),
-            sessionSnapshotPath = Some(sessionSnapshotPath),
-            outputPartitionCount = Some(outputPartitionCount),
-            outputPartitionStart = outputPartitionStart,
-            outputPartitionEnd = outputPartitionEnd
-          )
-          println(s"batch_status=${BatchRunStatus.HiveRegistered.entryName}")
-        }
+        BatchRunLogger.logStatus(
+          runLogBasePath = config.runLogBasePath,
+          runId = config.runId,
+          targetDate = targetDate,
+          status = BatchRunStatus.HiveRegistered,
+          startedAt = startedAt,
+          stagingPath = Some(validOutputPath),
+          dlqPath = Some(dlqOutputPath),
+          finalOutputPath = Some(finalOutputPath),
+          processingStartDate = Some(config.startDate),
+          processingEndDate = Some(config.endDate),
+          snapshotSeedDate = Some(previousSnapshotDate),
+          snapshotTargetDate = Some(config.endDate),
+          uniqueSessionCount = Some(uniqueSessionCount),
+          sessionSnapshotPath = Some(sessionSnapshotPath),
+          outputPartitionCount = Some(outputPartitionCount),
+          outputPartitionStart = outputPartitionStart,
+          outputPartitionEnd = outputPartitionEnd
+        )
+        println(s"batch_status=${BatchRunStatus.HiveRegistered.entryName}")
 
-        val registeredHivePartitions = finalOutputPath match {
-          case Some(outputPath) if shouldRegisterHivePartitions =>
-            HiveTableManager.createActivityEventsTable(spark, config.hiveTableName, outputPath)
-            HiveTableManager.addPartitions(spark, config.hiveTableName, outputPath, outputPartitions)
-          case _ =>
-            Seq.empty[String]
-        }
+        HiveTableManager.createActivityEventsTable(spark, config.hiveTableName, finalOutputPath)
+        val registeredHivePartitions =
+          HiveTableManager.addPartitions(spark, config.hiveTableName, finalOutputPath, outputPartitions)
 
-        val wauSummary =
-          if (config.executeWau) {
-            BatchRunLogger.logStatus(
-              runLogBasePath = config.runLogBasePath,
-              runId = config.runId,
-              targetDate = targetDate,
-              status = BatchRunStatus.WauCompleted,
-              startedAt = startedAt,
-              stagingPath = Some(validOutputPath),
-              dlqPath = Some(dlqOutputPath),
-              finalOutputPath = finalOutputPath,
-              processingStartDate = Some(config.startDate),
-              processingEndDate = Some(config.endDate),
-              snapshotSeedDate = Some(previousSnapshotDate),
-              snapshotTargetDate = Some(config.endDate),
-              uniqueSessionCount = Some(uniqueSessionCount),
-              registeredHivePartitionsCount = Some(registeredHivePartitions.size),
-              sessionSnapshotPath = Some(sessionSnapshotPath),
-              message = Some(s"affected_week_start=$affectedWeekStart; affected_week_end=$affectedWeekEnd")
-            )
-            println(s"batch_status=${BatchRunStatus.WauCompleted.entryName}")
+        BatchRunLogger.logStatus(
+          runLogBasePath = config.runLogBasePath,
+          runId = config.runId,
+          targetDate = targetDate,
+          status = BatchRunStatus.WauCompleted,
+          startedAt = startedAt,
+          stagingPath = Some(validOutputPath),
+          dlqPath = Some(dlqOutputPath),
+          finalOutputPath = Some(finalOutputPath),
+          processingStartDate = Some(config.startDate),
+          processingEndDate = Some(config.endDate),
+          snapshotSeedDate = Some(previousSnapshotDate),
+          snapshotTargetDate = Some(config.endDate),
+          uniqueSessionCount = Some(uniqueSessionCount),
+          registeredHivePartitionsCount = Some(registeredHivePartitions.size),
+          sessionSnapshotPath = Some(sessionSnapshotPath),
+          message = Some(s"affected_week_start=$affectedWeekStart; affected_week_end=$affectedWeekEnd")
+        )
+        println(s"batch_status=${BatchRunStatus.WauCompleted.entryName}")
 
-            val userWau = WauQueryExecutor.runUserWau(
-              spark,
-              config.hiveTableName,
-              affectedWeekStart = Some(affectedWeekStart),
-              affectedWeekEnd = Some(affectedWeekEnd)
-            )
-            val weeklyActiveSessions = WauQueryExecutor.runWeeklyActiveSessions(
-              spark,
-              config.hiveTableName,
-              affectedWeekStart = Some(affectedWeekStart),
-              affectedWeekEnd = Some(affectedWeekEnd)
-            )
+        val userWau = WauQueryExecutor.runUserWau(
+          spark,
+          config.hiveTableName,
+          affectedWeekStart = Some(affectedWeekStart),
+          affectedWeekEnd = Some(affectedWeekEnd)
+        )
+        val weeklyActiveSessions = WauQueryExecutor.runWeeklyActiveSessions(
+          spark,
+          config.hiveTableName,
+          affectedWeekStart = Some(affectedWeekStart),
+          affectedWeekEnd = Some(affectedWeekEnd)
+        )
 
-            WauQueryExecutor.writeResult(userWau, wauUsersOutputPath)
-            WauQueryExecutor.writeResult(weeklyActiveSessions, weeklyActiveSessionsOutputPath)
+        WauQueryExecutor.writeResult(userWau, wauUsersOutputPath)
+        WauQueryExecutor.writeResult(weeklyActiveSessions, weeklyActiveSessionsOutputPath)
 
-            if (shouldRegisterHivePartitions) {
-              HiveTableManager.createWauUsersTable(spark, WauUsersTableName, wauUsersOutputPath)
-              HiveTableManager.addWeekPartitions(spark, WauUsersTableName, wauUsersOutputPath, affectedWeeks)
-              HiveTableManager.createWeeklyActiveSessionsTable(
-                spark,
-                WeeklyActiveSessionsTableName,
-                weeklyActiveSessionsOutputPath
-              )
-              HiveTableManager.addWeekPartitions(
-                spark,
-                WeeklyActiveSessionsTableName,
-                weeklyActiveSessionsOutputPath,
-                affectedWeeks
-              )
-            }
+        HiveTableManager.createWauUsersTable(spark, WauUsersTableName, wauUsersOutputPath)
+        HiveTableManager.addWeekPartitions(spark, WauUsersTableName, wauUsersOutputPath, affectedWeeks)
+        HiveTableManager.createWeeklyActiveSessionsTable(
+          spark,
+          WeeklyActiveSessionsTableName,
+          weeklyActiveSessionsOutputPath
+        )
+        HiveTableManager.addWeekPartitions(
+          spark,
+          WeeklyActiveSessionsTableName,
+          weeklyActiveSessionsOutputPath,
+          affectedWeeks
+        )
 
-            val userWauRows = userWau.collect().toSeq
-            val weeklyActiveSessionRows = weeklyActiveSessions.collect().toSeq
-            val userWauWeekCount = userWauRows.size.toLong
-            val weeklyActiveSessionWeekCount = weeklyActiveSessionRows.size.toLong
-            val userWauStartWeek = userWauRows.headOption.map(row => row.getAs[Date]("week_start_kst").toString)
-            val userWauEndWeek = userWauRows.lastOption.map(row => row.getAs[Date]("week_start_kst").toString)
-            val weeklyActiveSessionsStartWeek =
-              weeklyActiveSessionRows.headOption.map(row => row.getAs[Date]("week_start_kst").toString)
-            val weeklyActiveSessionsEndWeek =
-              weeklyActiveSessionRows.lastOption.map(row => row.getAs[Date]("week_start_kst").toString)
+        val userWauRows = userWau.collect().toSeq
+        val weeklyActiveSessionRows = weeklyActiveSessions.collect().toSeq
+        val userWauWeekCount = userWauRows.size.toLong
+        val weeklyActiveSessionWeekCount = weeklyActiveSessionRows.size.toLong
+        val userWauStartWeek = userWauRows.headOption.map(row => row.getAs[Date]("week_start_kst").toString)
+        val userWauEndWeek = userWauRows.lastOption.map(row => row.getAs[Date]("week_start_kst").toString)
+        val weeklyActiveSessionsStartWeek =
+          weeklyActiveSessionRows.headOption.map(row => row.getAs[Date]("week_start_kst").toString)
+        val weeklyActiveSessionsEndWeek =
+          weeklyActiveSessionRows.lastOption.map(row => row.getAs[Date]("week_start_kst").toString)
 
-            println("wau_users:")
-            userWau.show(100, truncate = false)
-            println("weekly_active_sessions:")
-            weeklyActiveSessions.show(100, truncate = false)
-            println(
-              s"wau_summary=week_count=$userWauWeekCount start_week=${userWauStartWeek.getOrElse("n/a")} end_week=${userWauEndWeek.getOrElse("n/a")}"
-            )
-            println(
-              s"weekly_active_sessions_summary=week_count=$weeklyActiveSessionWeekCount start_week=${weeklyActiveSessionsStartWeek.getOrElse("n/a")} end_week=${weeklyActiveSessionsEndWeek.getOrElse("n/a")}"
-            )
-            println(s"wau_affected_week_range=$affectedWeekStart,$affectedWeekEnd")
+        println("wau_users:")
+        userWau.show(100, truncate = false)
+        println("weekly_active_sessions:")
+        weeklyActiveSessions.show(100, truncate = false)
+        println(
+          s"wau_summary=week_count=$userWauWeekCount start_week=${userWauStartWeek.getOrElse("n/a")} end_week=${userWauEndWeek.getOrElse("n/a")}"
+        )
+        println(
+          s"weekly_active_sessions_summary=week_count=$weeklyActiveSessionWeekCount start_week=${weeklyActiveSessionsStartWeek.getOrElse("n/a")} end_week=${weeklyActiveSessionsEndWeek.getOrElse("n/a")}"
+        )
+        println(s"wau_affected_week_range=$affectedWeekStart,$affectedWeekEnd")
 
-            Some(
-              WauExecutionSummary(
-                wauUsersOutputPath = wauUsersOutputPath,
-                weeklyActiveSessionsOutputPath = weeklyActiveSessionsOutputPath,
-                wauUsersWeekCount = userWauWeekCount,
-                wauUsersStartWeek = userWauStartWeek,
-                wauUsersEndWeek = userWauEndWeek,
-                weeklyActiveSessionsWeekCount = weeklyActiveSessionWeekCount,
-                weeklyActiveSessionsStartWeek = weeklyActiveSessionsStartWeek,
-                weeklyActiveSessionsEndWeek = weeklyActiveSessionsEndWeek
-              )
-            )
-          } else {
-            None
-          }
+        val wauSummary = WauExecutionSummary(
+          wauUsersOutputPath = wauUsersOutputPath,
+          weeklyActiveSessionsOutputPath = weeklyActiveSessionsOutputPath,
+          wauUsersWeekCount = userWauWeekCount,
+          wauUsersStartWeek = userWauStartWeek,
+          wauUsersEndWeek = userWauEndWeek,
+          weeklyActiveSessionsWeekCount = weeklyActiveSessionWeekCount,
+          weeklyActiveSessionsStartWeek = weeklyActiveSessionsStartWeek,
+          weeklyActiveSessionsEndWeek = weeklyActiveSessionsEndWeek
+        )
 
         BatchRunLogger.logStatus(
           runLogBasePath = config.runLogBasePath,
@@ -368,7 +350,7 @@ object ActivityBatchApp {
           startedAt = startedAt,
           stagingPath = Some(validOutputPath),
           dlqPath = Some(dlqOutputPath),
-          finalOutputPath = finalOutputPath,
+          finalOutputPath = Some(finalOutputPath),
           processingStartDate = Some(config.startDate),
           processingEndDate = Some(config.endDate),
           snapshotSeedDate = Some(previousSnapshotDate),
@@ -390,14 +372,14 @@ object ActivityBatchApp {
           registeredHivePartitionsCount = Some(registeredHivePartitions.size),
           sessionSnapshotPath = Some(sessionSnapshotPath),
           message = Some(s"affected_week_start=$affectedWeekStart; affected_week_end=$affectedWeekEnd"),
-          wauUsersOutputPath = wauSummary.map(_.wauUsersOutputPath),
-          weeklyActiveSessionsOutputPath = wauSummary.map(_.weeklyActiveSessionsOutputPath),
-          wauUsersWeekCount = wauSummary.map(_.wauUsersWeekCount),
-          wauUsersStartWeek = wauSummary.flatMap(_.wauUsersStartWeek),
-          wauUsersEndWeek = wauSummary.flatMap(_.wauUsersEndWeek),
-          weeklyActiveSessionsWeekCount = wauSummary.map(_.weeklyActiveSessionsWeekCount),
-          weeklyActiveSessionsStartWeek = wauSummary.flatMap(_.weeklyActiveSessionsStartWeek),
-          weeklyActiveSessionsEndWeek = wauSummary.flatMap(_.weeklyActiveSessionsEndWeek)
+          wauUsersOutputPath = Some(wauSummary.wauUsersOutputPath),
+          weeklyActiveSessionsOutputPath = Some(wauSummary.weeklyActiveSessionsOutputPath),
+          wauUsersWeekCount = Some(wauSummary.wauUsersWeekCount),
+          wauUsersStartWeek = wauSummary.wauUsersStartWeek,
+          wauUsersEndWeek = wauSummary.wauUsersEndWeek,
+          weeklyActiveSessionsWeekCount = Some(wauSummary.weeklyActiveSessionsWeekCount),
+          weeklyActiveSessionsStartWeek = wauSummary.weeklyActiveSessionsStartWeek,
+          weeklyActiveSessionsEndWeek = wauSummary.weeklyActiveSessionsEndWeek
         )
         println(s"batch_status=${BatchRunStatus.Success.entryName}")
 
@@ -408,11 +390,9 @@ object ActivityBatchApp {
         println(s"dlq_output_path=$dlqOutputPath")
         println(s"session_snapshot_path=$sessionSnapshotPath")
         println(s"registered_hive_partitions_count=${registeredHivePartitions.size}")
-        finalOutputPath.foreach(path => println(s"final_output_path=$path"))
-        if (config.executeWau) {
-          println(s"wau_users_output_path=$wauUsersOutputPath")
-          println(s"weekly_active_sessions_output_path=$weeklyActiveSessionsOutputPath")
-        }
+        println(s"final_output_path=$finalOutputPath")
+        println(s"wau_users_output_path=$wauUsersOutputPath")
+        println(s"weekly_active_sessions_output_path=$weeklyActiveSessionsOutputPath")
         println(s"input_row_count=$inputCount")
         println(s"validated_row_count=$validCount")
         println(s"sessionized_row_count=$sessionizedCount")
@@ -453,7 +433,7 @@ object ActivityBatchApp {
           startedAt = startedAt,
           stagingPath = Some(validOutputPath),
           dlqPath = Some(dlqOutputPath),
-          finalOutputPath = finalOutputPath,
+          finalOutputPath = Some(finalOutputPath),
           message = Some(error.getMessage),
           processingStartDate = Some(config.startDate),
           processingEndDate = Some(config.endDate),

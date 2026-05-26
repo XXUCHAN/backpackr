@@ -186,8 +186,7 @@ docker compose up
 sbt "run --start-date 2019-10-01 \
   --end-date 2019-11-30 \
   --input-path .data \
-  --run-id full_dataset_run \
-  --execute-wau"
+  --run-id full_dataset_run"
 ```
 
 ### 2. 특정 기간만 부분 실행
@@ -202,8 +201,7 @@ sbt "run --start-date 2019-10-01 \
 docker compose run spark-etl sbt "run --start-date 2019-10-01 \
   --end-date 2019-10-15 \
   --input-path .data/2019-Oct.csv \
-  --run-id oct_1_15_run \
-  --execute-wau"
+  --run-id oct_1_15_run"
 ```
 
 **로컬 환경 (SBT가 설치된 경우)**
@@ -212,8 +210,7 @@ docker compose run spark-etl sbt "run --start-date 2019-10-01 \
 sbt "run --start-date 2019-10-01 \
   --end-date 2019-10-15 \
   --input-path .data/2019-Oct.csv \
-  --run-id oct_1_15_run \
-  --execute-wau"
+  --run-id oct_1_15_run"
 ```
 
 기본값:
@@ -227,7 +224,7 @@ sbt "run --start-date 2019-10-01 \
 - `wau-output-base-path = output/wau-results`
 - `hive-table-name = activity_events`
 
-`--execute-wau`를 주면 Hive external table 생성, partition 등록, WAU 실행까지 함께 수행한다.
+배치는 기본적으로 Hive external table 생성, partition 등록, WAU 실행까지 항상 수행한다.
 WAU 결과는 주간 aggregate dataset으로 관리되며, 이번 실행이 걸친 주차만 다시 계산한다.
 즉 `activity_events` 전체를 매번 full scan 하지 않고, `start-date`, `end-date`가 영향을 주는 `week_start_kst` 범위만 집계한 뒤 해당 주차 partition만 overwrite 한다.
 

@@ -46,10 +46,6 @@ object AppConfigParser {
           .action((value, config) => config.copy(wauOutputBasePath = value)),
         opt[String]("hive-table-name")
           .action((value, config) => config.copy(hiveTableName = value)),
-        opt[Unit]("register-hive-partitions")
-          .action((_, config) => config.copy(registerHivePartitions = true)),
-        opt[Unit]("execute-wau")
-          .action((_, config) => config.copy(executeWau = true)),
         opt[String]("checkpoint-base-path")
           .action((value, config) => config.copy(checkpointBasePath = value)),
         opt[String]("run-id")

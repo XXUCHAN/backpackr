@@ -16,8 +16,6 @@ final case class AppConfig(
     runLogBasePath: String = "output/run-log",
     wauOutputBasePath: String = "output/wau-results",
     hiveTableName: String = "activity_events",
-    registerHivePartitions: Boolean = false,
-    executeWau: Boolean = false,
     checkpointBasePath: String = "",
     runId: String = ""
 )
