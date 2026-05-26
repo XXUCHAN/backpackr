@@ -80,16 +80,22 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       val deduplicationResult = Deduplicator.analyze(rangeFilteredValid)
       val deduplicated = deduplicationResult.deduplicated.cache()
       val sessionized = Sessionizer(deduplicated).cache()
-      val duplicates = deduplicationResult.duplicates.cache()
+      val duplicateGroups = deduplicationResult.duplicateGroups.cache()
 
       val validCount = rangeFilteredValid.count()
       val invalidCount = validationResult.invalid.count()
       val deduplicatedCount = deduplicated.count()
       val sessionizedCount = sessionized.count()
-      val duplicateRowsCount = duplicates.count()
-      val droppedDuplicateCount = duplicates.filter(not(col("dedup_retained"))).count()
-      val duplicateGroupCount =
-        if (duplicateRowsCount > 0L) duplicates.select("dedup_key").distinct().count() else 0L
+      val duplicateMetrics = duplicateGroups
+        .agg(
+          count(lit(1)).as("duplicate_group_count"),
+          coalesce(sum(col("duplicate_group_size")), lit(0L)).cast("long").as("duplicate_rows_count"),
+          coalesce(sum(col("dropped_duplicate_row_count")), lit(0L)).cast("long").as("dropped_duplicate_row_count")
+        )
+        .first()
+      val duplicateGroupCount = duplicateMetrics.getAs[Long]("duplicate_group_count")
+      val duplicateRowsCount = duplicateMetrics.getAs[Long]("duplicate_rows_count")
+      val droppedDuplicateCount = duplicateMetrics.getAs[Long]("dropped_duplicate_row_count")
       val uniqueSessionCount = sessionized.select("session_id").distinct().count()
       val invalidReasonSummaryText =
         if (invalidCount > 0L) {
@@ -115,9 +121,8 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       assert(sessionized.columns.contains("session_start_time_utc"))
       assert(sessionized.columns.contains("session_start_time_kst"))
       assert(sessionized.columns.contains("session_id"))
-      assert(duplicates.columns.contains("duplicate_group_size"))
-      assert(duplicates.columns.contains("duplicate_rank"))
-      assert(duplicates.columns.contains("dedup_retained"))
+      assert(duplicateGroups.columns.contains("duplicate_group_size"))
+      assert(duplicateGroups.columns.contains("dropped_duplicate_row_count"))
 
       val dedupKeyLengths = deduplicated.select(length(col("dedup_key")).as("dedup_key_length")).distinct().collect()
       assert(dedupKeyLengths.forall(_.getInt(0) == 64))
@@ -188,12 +193,12 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
         message = if (qualityGateResult.warnings.nonEmpty) Some(qualityGateResult.warnings.mkString("; ")) else None
       )
 
-      if (duplicateRowsCount > 0L) {
-        ActivityWriter.writeToStaging(duplicates, duplicateOutputPath)
-        DuplicateGroupJsonExporter.writeGroupedJson(duplicates, duplicateGroupJsonOutputPath)
+      if (duplicateGroupCount > 0L) {
+        duplicateGroups.write.mode("overwrite").parquet(duplicateOutputPath)
+        DuplicateGroupJsonExporter.writeGroupedJson(duplicateGroups, duplicateGroupJsonOutputPath)
 
         val writtenDuplicates = spark.read.parquet(duplicateOutputPath)
-        assert(writtenDuplicates.count() === duplicateRowsCount)
+        assert(writtenDuplicates.count() === duplicateGroupCount)
         assert(Files.exists(Paths.get(duplicateGroupJsonOutputPath)))
       } else {
         assert(!Files.exists(Paths.get(duplicateOutputPath)))
@@ -233,7 +238,7 @@ class ActivityBatchAppE2ESmokeSpec extends SparkFunSuite {
       info(
         s"Smoke artifacts: partitions=${outputPartitions.mkString(", ")} valid=$validOutputPath " +
           s"batch_run_log=$batchRunLogPath session_snapshot_json=$sessionSnapshotJsonOutputPath " +
-          s"duplicate_json=${if (duplicateRowsCount > 0L) duplicateGroupJsonOutputPath else "(not generated)"}"
+          s"duplicate_json=${if (duplicateGroupCount > 0L) duplicateGroupJsonOutputPath else "(not generated)"}"
       )
       if (invalidCount > 0L) {
         info(s"Smoke invalid reason summary: $invalidReasonSummaryText")

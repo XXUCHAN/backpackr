@@ -61,22 +61,17 @@ class DeduplicatorSpec extends SparkFunSuite {
     val result = Deduplicator.analyze(normalized)
 
     assert(result.deduplicated.count() === 2L)
-    assert(result.duplicates.count() === 2L)
-    assert(result.duplicates.columns.contains("duplicate_group_size"))
-    assert(result.duplicates.columns.contains("duplicate_rank"))
-    assert(result.duplicates.columns.contains("dedup_retained"))
+    assert(result.duplicateGroups.count() === 1L)
+    assert(result.duplicateGroups.columns.contains("duplicate_group_size"))
+    assert(result.duplicateGroups.columns.contains("dropped_duplicate_row_count"))
 
-    val duplicateRows = result.duplicates
-      .select("raw_user_session", "duplicate_group_size", "duplicate_rank", "dedup_retained")
+    val duplicateGroups = result.duplicateGroups
+      .select("duplicate_group_size", "dropped_duplicate_row_count")
       .collect()
-      .map(row => (row.getString(0), row.getLong(1), row.getInt(2), row.getBoolean(3)))
-      .sortBy(_._3)
+      .map(row => (row.getLong(0), row.getLong(1)))
 
-    assert(duplicateRows.length === 2)
-    assert(duplicateRows.forall(_._2 == 2L))
-    assert(duplicateRows.map(_._3).sameElements(Array(1, 2)))
-    assert(duplicateRows.count(_._4) === 1)
-    assert(duplicateRows.map(_._1).toSet === Set("session-a"))
+    assert(duplicateGroups.length === 1)
+    assert(duplicateGroups.head === ((2L, 1L)))
   }
 
   test("deduplicator should keep rows that differ only by raw_user_session") {
@@ -94,6 +89,6 @@ class DeduplicatorSpec extends SparkFunSuite {
     val result = Deduplicator.analyze(normalized)
 
     assert(result.deduplicated.count() === 2L)
-    assert(result.duplicates.count() === 0L)
+    assert(result.duplicateGroups.count() === 0L)
   }
 }

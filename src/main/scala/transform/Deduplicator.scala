@@ -3,7 +3,6 @@ package transform
 import org.apache.spark.sql.Column
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.expressions.Window
 
 object Deduplicator {
   private val DedupKeyColumn = "dedup_key"
@@ -14,11 +13,11 @@ object Deduplicator {
 
   def analyze(df: DataFrame): DeduplicationResult = {
     val keyed = withDedupKey(df)
-    val duplicatesOnly = duplicateRows(keyed)
+    val duplicateGroups = duplicateGroupsOnly(keyed)
 
     DeduplicationResult(
       deduplicated = keyed.dropDuplicates(DedupKeyColumn),
-      duplicates = duplicatesOnly
+      duplicateGroups = duplicateGroups
     )
   }
 
@@ -42,35 +41,16 @@ object Deduplicator {
       )
     )
 
-  private def duplicateRows(df: DataFrame): DataFrame = {
-    val duplicateCounts = df
+  private def duplicateGroupsOnly(df: DataFrame): DataFrame =
+    df
       .groupBy(DedupKeyColumn)
       .count()
       .withColumnRenamed("count", "duplicate_group_size")
       .filter(col("duplicate_group_size") > 1)
-
-    val orderWindow = Window
-      .partitionBy(DedupKeyColumn)
-      .orderBy(
-        col("event_time_utc"),
-        col("event_type"),
-        col("product_id"),
-        col("category_id"),
-        col("category_code"),
-        col("brand"),
-        col("normalized_price"),
-        col("user_id"),
-        col("raw_user_session")
-      )
-
-    df.join(duplicateCounts, Seq(DedupKeyColumn), "inner")
-      .withColumn("duplicate_rank", row_number().over(orderWindow))
-      .withColumn("dedup_retained", col("duplicate_rank") === lit(1))
-      .orderBy(col(DedupKeyColumn), col("duplicate_rank"))
-  }
+      .withColumn("dropped_duplicate_row_count", col("duplicate_group_size") - lit(1L))
 
   private def keyPart(column: Column): Column =
     coalesce(column.cast("string"), lit(NullToken))
 }
 
-final case class DeduplicationResult(deduplicated: DataFrame, duplicates: DataFrame)
+final case class DeduplicationResult(deduplicated: DataFrame, duplicateGroups: DataFrame)

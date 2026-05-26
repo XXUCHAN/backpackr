@@ -16,3 +16,6 @@ target/
 .DS_Store
 .data
 metastore_db/
+project/
+docs/
+.bloop/

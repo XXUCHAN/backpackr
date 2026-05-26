@@ -1,7 +1,7 @@
 import config.AppConfigParser
 import logging.BatchRunLogger
 import model.{BatchExecutionSummary, BatchRunStatus}
-import org.apache.spark.sql.functions.{coalesce, col, lit, not}
+import org.apache.spark.sql.functions.{coalesce, col, count, lit, sum}
 import org.apache.spark.storage.StorageLevel
 import query.{HiveTableManager, WauQueryExecutor}
 import reader.CsvActivityReader
@@ -95,7 +95,7 @@ object ActivityBatchApp {
 
         val targetDateColumn = coalesce(col("event_date_kst").cast("string"), lit(config.startDate))
         val validationResult = Validator(normalized, targetDateColumn)
-        val invalid = validationResult.invalid.persist(StorageLevel.DISK_ONLY)
+        val invalid = validationResult.invalid.persist(StorageLevel.MEMORY_AND_DISK)
         val rangeFilteredValid =
           EventDateRangeFilter.filter(validationResult.valid, config.startDate, config.endDate).persist(StorageLevel.DISK_ONLY)
         val validCount = rangeFilteredValid.count()
@@ -136,12 +136,18 @@ object ActivityBatchApp {
 
         val deduplicationResult = Deduplicator.analyze(rangeFilteredValid)
         val deduplicatedValid = deduplicationResult.deduplicated.persist(StorageLevel.DISK_ONLY)
-        val duplicates = deduplicationResult.duplicates.persist(StorageLevel.DISK_ONLY)
+        val duplicateGroups = deduplicationResult.duplicateGroups.persist(StorageLevel.DISK_ONLY)
         val deduplicatedCount = deduplicatedValid.count()
-        val duplicateRowsCount = duplicates.count()
-        val droppedDuplicateRowsCount = duplicates.filter(not(col("dedup_retained"))).count()
-        val duplicateGroupCount =
-          if (duplicateRowsCount > 0L) duplicates.select("dedup_key").distinct().count() else 0L
+        val duplicateMetrics = duplicateGroups
+          .agg(
+            count(lit(1)).as("duplicate_group_count"),
+            coalesce(sum(col("duplicate_group_size")), lit(0L)).cast("long").as("duplicate_rows_count"),
+            coalesce(sum(col("dropped_duplicate_row_count")), lit(0L)).cast("long").as("dropped_duplicate_rows_count")
+          )
+          .first()
+        val duplicateGroupCount = duplicateMetrics.getAs[Long]("duplicate_group_count")
+        val duplicateRowsCount = duplicateMetrics.getAs[Long]("duplicate_rows_count")
+        val droppedDuplicateRowsCount = duplicateMetrics.getAs[Long]("dropped_duplicate_rows_count")
         rangeFilteredValid.unpersist(blocking = false)
 
         BatchRunLogger.logStatus(
@@ -432,7 +438,7 @@ object ActivityBatchApp {
         }
 
         invalid.unpersist(blocking = false)
-        duplicates.unpersist(blocking = false)
+        duplicateGroups.unpersist(blocking = false)
         sessionizedValid.unpersist(blocking = false)
       } finally {
         spark.stop()
