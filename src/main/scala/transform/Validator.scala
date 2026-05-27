@@ -8,10 +8,9 @@ import org.apache.spark.sql.functions._
 final case class ValidationResult(valid: DataFrame, invalid: DataFrame)
 
 object Validator {
-  def apply(df: DataFrame, targetDate: String): ValidationResult =
-    apply(df, coalesce(col("event_date_kst").cast("string"), lit(targetDate)))
+  def apply(df: DataFrame, targetDate: String): ValidationResult = {
+    val targetDateCol = coalesce(col("event_date_kst").cast("string"), lit(targetDate))
 
-  def apply(df: DataFrame, targetDate: Column): ValidationResult = {
     val invalidEventTime = col("event_time_utc").isNull
     val nullUserId = col("user_id").isNull
     val nullEventType = col("event_type").isNull
@@ -35,7 +34,7 @@ object Validator {
     val invalid = df
       .filter(invalidCondition)
       .withColumn("reject_reason", rejectReason)
-      .withColumn("target_date", targetDate)
+      .withColumn("target_date", targetDateCol)
       .withColumn("raw_payload", rawPayload)
 
     val valid = df.filter(not(invalidCondition))
