@@ -9,7 +9,7 @@ final case class ValidationResult(valid: DataFrame, invalid: DataFrame)
 
 object Validator {
   def apply(df: DataFrame, targetDate: String): ValidationResult =
-    apply(df, lit(targetDate))
+    apply(df, coalesce(col("event_date_kst").cast("string"), lit(targetDate)))
 
   def apply(df: DataFrame, targetDate: Column): ValidationResult = {
     val invalidEventTime = col("event_time_utc").isNull
@@ -35,7 +35,7 @@ object Validator {
     val invalid = df
       .filter(invalidCondition)
       .withColumn("reject_reason", rejectReason)
-      .withColumn("target_date", lit(targetDate))
+      .withColumn("target_date", targetDate)
       .withColumn("raw_payload", rawPayload)
 
     val valid = df.filter(not(invalidCondition))

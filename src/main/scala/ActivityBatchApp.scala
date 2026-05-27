@@ -91,9 +91,7 @@ object ActivityBatchApp {
           inputRowCount = Some(inputCount)
         )
         println(s"batch_status=${BatchRunStatus.Validated.entryName}")
-
-        val targetDateColumn = coalesce(col("event_date_kst").cast("string"), lit(config.startDate))
-        val validationResult = Validator(normalized, targetDateColumn)
+        val validationResult = Validator(normalized, config.startDate)
         val invalid = validationResult.invalid.persist(StorageLevel.MEMORY_AND_DISK)
         val rangeFilteredValid =
           EventDateRangeFilter.filter(validationResult.valid, config.startDate, config.endDate).persist(StorageLevel.DISK_ONLY)
